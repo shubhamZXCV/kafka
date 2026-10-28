@@ -13,4 +13,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # All executables land in one directory so the functional tests can find them.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+include(Warnings)
+include(Sanitizers)
+
 add_subdirectory(src)
