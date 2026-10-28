@@ -1,6 +1,7 @@
 add_library(elog_common STATIC
     config.cc
     logging.cc
+    socket.cc
     version.cc)
 
 target_include_directories(elog_common PUBLIC include)
