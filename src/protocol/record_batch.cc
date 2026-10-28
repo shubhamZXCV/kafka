@@ -238,4 +238,28 @@ void RecordBatchView::forEachRecord(const std::function<void(const Record&)>& fn
     (void)status;
 }
 
+void stampBatch(std::span<std::byte> batch, Offset base, Epoch epoch) {
+    assert(batch.size() >= batch::kHeaderBytes);
+    storeBE<std::uint64_t>(batch, batch::kBaseOffsetAt, base);
+    storeBE<std::uint32_t>(batch, batch::kLeaderEpochAt, epoch);
+}
+
+std::vector<std::byte> sliceBatch(const RecordBatchView& src, Offset from,
+                                  std::uint32_t maxRecords) {
+    assert(src.baseOffset() <= from && from <= src.lastOffset() && maxRecords >= 1);
+    const Offset end = std::min<Offset>(from + maxRecords, src.lastOffset() + 1);  // exclusive
+
+    // Re-encoding through the builder renumbers offset deltas from 0 and recomputes the
+    // CRC, so the slice is a normal batch that RecordBatchView::parse accepts.
+    RecordBatchBuilder builder;
+    src.forEachRecord([&](const Record& r) {
+        if (r.offset >= from && r.offset < end) {
+            builder.add(r.key, r.value, r.timestampMs);
+        }
+    });
+    std::vector<std::byte> slice = builder.build();
+    stampBatch(slice, from, src.leaderEpoch());
+    return slice;
+}
+
 }  // namespace elog

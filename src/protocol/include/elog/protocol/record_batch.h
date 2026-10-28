@@ -135,4 +135,14 @@ private:
     std::span<const std::byte> bytes_;
 };
 
+// Leader append (LLD §5.3): writes baseOffset and leaderEpoch into a batch in place. Both
+// fields lie before the CRC range, so the CRC stays valid.
+void stampBatch(std::span<std::byte> batch, Offset base, Epoch epoch);
+
+// Credit-exact fetch (LLD §6.6): a new batch holding records [from, from + maxRecords) of
+// src, cut to src's end. It gets baseOffset = from, src's leaderEpoch, offset deltas from 0
+// and a fresh CRC. Requires src.baseOffset() <= from <= src.lastOffset() and maxRecords >= 1.
+std::vector<std::byte> sliceBatch(const RecordBatchView& src, Offset from,
+                                  std::uint32_t maxRecords);
+
 }  // namespace elog
