@@ -6,9 +6,9 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.1 |
+| Version | 1.2 |
 | Status | Draft for review |
-| Date | 2026-10-28 |
+| Date | 2026-10-29 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
 
 ### Revision History
@@ -17,6 +17,7 @@
 |---|---|---|
 | 1.0 | 2026-10-28 | Initial draft |
 | 1.1 | 2026-10-28 | Functional tests only (SRS v1.1): §15 rewritten as a functional test catalogue; GoogleTest/RapidCheck removed (§2); `Clock` interface replaced by time helpers (§3.2); `ELOG_TEST_HOOKS` and `OrderedMutex` removed (§14, §11.2); `elogctl describe-*`/`log-verify` and a read-only `DescribeGroup` request added for observability (§15.2). |
+| 1.2 | 2026-10-29 | R-9: `ErrorCode` moves to `common` and gains the local-only `NETWORK_ERROR` (§2.1, §3.1, §4.4). |
 
 ---
 
@@ -82,11 +83,11 @@ This document turns the HLD into an implementable specification: source layout, 
 │   └── Warnings.cmake           # -Wall -Wextra -Wpedantic -Werror (CI)
 ├── src/
 │   ├── common/                  # target: elog_common
-│   │   ├── include/elog/common/{types,result,time,config,logging,metrics,
-│   │   │                         socket,frame,crc32c,bytes,bounded_queue}.h
+│   │   ├── include/elog/common/{types,error_code,result,time,config,logging,
+│   │   │                         metrics,socket,crc32c,bytes,bounded_queue}.h
 │   │   └── *.cc
 │   ├── protocol/                # target: elog_protocol
-│   │   ├── include/elog/protocol/{api_keys,error_codes,messages,
+│   │   ├── include/elog/protocol/{api_keys,error_codes,frame,messages,
 │   │   │                           json_codec,msgpack_codec,record_batch}.h
 │   │   └── *.cc
 │   ├── storage/                 # target: elog_storage
@@ -184,7 +185,7 @@ struct TopicPartition {
     auto operator<=>(const TopicPartition&) const = default;
 };
 
-enum class ErrorCode : std::int16_t;   // defined in protocol/error_codes.h (§4.4)
+enum class ErrorCode : std::int16_t;   // values in common/error_code.h (§4.4, R-9)
 
 // Minimal expected-like type (std::expected is C++23).
 template <class T>
@@ -335,8 +336,11 @@ private:
 
 ### 4.4 Error Codes
 
+The enum lives in `common/error_code.h` so that `Result` and `Socket` can use it (R-9). Names and `isRetriable` live in `protocol/error_codes.h`.
+
 | Code | Name | Retriable | Meaning |
 |---|---|---|---|
+| −1 | `NETWORK_ERROR` | Yes (reconnect) | **Local only, never sent on the wire.** Connect failed, peer closed, or socket timeout: the "transport error" of §6.8 and §10.7. |
 | 0 | `NONE` | — | Success |
 | 1 | `CORRUPT_MESSAGE` | Yes (reconnect) | Bad magic, CRC mismatch or truncated frame |
 | 2 | `UNSUPPORTED_VERSION` | No | Unknown protocol version |
@@ -2291,7 +2295,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout, so the HLD is unchanged. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2303,6 +2307,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-6 | §7.4 | Commit validation unspecified | Fencing is **only** the SQL CAS. No in-memory membership pre-check. | One source of truth. E5 sees `STALE_EPOCH`. |
 | R-7 | §9.2 | HW = min LEO over ISR | HW uses the **union of current and pending ISR** while an `AlterIsr` is in flight | Safety of shrink ordering (HLD §9.9) |
 | R-8 | §12.2 catalogue | No group inspection API | Added read-only **`DescribeGroup` (25)** | Functional tests and `elogctl describe-group` need to observe ownership and epochs |
+| R-9 | §12.3 errors | Error codes belong to the protocol | **`ErrorCode` is defined in `common`**, plus local-only `NETWORK_ERROR = −1`. Frame codec sits in `protocol`. | `Result` (common) holds an `ErrorCode`, and `common` may not depend on `protocol`. Socket failures need a code. |
 
 ---
 

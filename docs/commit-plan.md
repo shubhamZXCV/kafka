@@ -124,14 +124,14 @@ a later row, stop and propose a split or reorder instead of improvising.
 | C004 | T0.1 | `build(repo): pin third-party dependencies` | `cmake/Dependencies.cmake` (FetchContent, exact versions) | Every dependency pinned (LLD §2.3); `MSGPACK_NO_BOOST` set | Clean build downloads and compiles them | S |
 | C005 | T0.1 | `chore(repo): add clang-format configuration` | `.clang-format` | — | `clang-format --dry-run` works | S |
 | C006 | T0.2 | ⚠ `docs(repo): add CLAUDE.md agent guide` | `CLAUDE.md`: commands, code-quality guidelines, lock order, spec and commit rules | Matches implementation-plan §3–4; this is what every agent reads | — | S |
-| C007 | T0.3 | `feat(common): add core types and Result` | `types.h` (Offset, Epoch, TopicPartition…), `result.h` (`Result<T>`, `Status`) | **Learn:** the error-handling style used everywhere | Builds | S |
+| C007 | T0.3 | `feat(common): add core types and Result` | `types.h` (Offset, Epoch, TopicPartition…), `error_code.h` (LLD §4.4 values, R-9), `result.h` (`Result<T>`, `Status`) | **Learn:** the error-handling style used everywhere | Builds | S |
 | C008 | T0.3 | `feat(common): add time helpers and config loader` | `time.h`, `config.h/.cc` (defaults < file < `--set`, unknown key fails, ranges) | Timeouts use the monotonic clock only | Builds | M |
 | C009 | T0.3 | `feat(common): add structured logging setup` | `logging.h/.cc` (spdlog, key=value, node and component fields) | — | Builds | S |
 | C010 | T0.3 | `feat(common): add Socket and Listener` | `socket.h/.cc`: connect, `readExact`, `writeAll`, timeouts, accept | `readExact` loops on short reads and `EINTR` | Builds | M |
 | C011 | T0.3 | `feat(common): add BoundedQueue` | `bounded_queue.h` (blocking push/pop with timeout, `freeSlots`, `removeIf`, `close`) | **Learn:** the bounded buffer behind all backpressure. Check the condition-variable predicates. | Builds | S |
 | C012 | T0.3 | `feat(common): add metrics and events CSV writers` | Counter/gauge/histogram registry, periodic CSV flush, events writer | CSV columns exactly as LLD §13.1 (tests and analysis read them) | Builds | M |
 | C013 | T0.4 | `feat(common): add byte-order helpers and CRC32C` | `bytes.h`, `crc32c.h` | — | Builds | S |
-| C014 | T0.4 | `feat(protocol): add API keys and error codes` | `api_keys.h`, `error_codes.h` (numbers, names, `isRetriable`) | Numbers match LLD §4.3–4.4 exactly | Builds | S |
+| C014 | T0.4 | `feat(protocol): add API keys and error codes` | `api_keys.h`, `error_codes.h` (`errorName`, `isRetriable`; the enum is in common, R-9) | Numbers match LLD §4.3–4.4 exactly | Builds | S |
 | C015 | T0.4 | `feat(protocol): add frame encoder and decoder` | `frame.h/.cc` with magic, version, CRC and size checks | **Learn:** the wire envelope. Oversize is rejected *before* allocating. | Builds; first exercised by F-PF-4 | M |
 
 ### Chapter 1 — Walking Skeleton (M1)
