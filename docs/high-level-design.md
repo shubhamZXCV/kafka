@@ -6,11 +6,19 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | High-Level Design |
-| Version | 1.0 |
+| Version | 1.2 |
 | Status | Draft for review |
-| Date | 2026-10-27 |
-| Inputs | [requirements.md](requirements.md) (SRS v1.0), [writeup.pdf](writeup.pdf) |
-| Next document | `low-level-design.md` (LLD) |
+| Date | 2026-10-28 |
+| Inputs | [requirements.md](requirements.md) (SRS v1.1), [writeup.pdf](writeup.pdf) |
+| Next document | [low-level-design.md](low-level-design.md) (LLD v1.1) |
+
+### Revision History
+
+| Version | Date | Changes |
+|---|---|---|
+| 1.0 | 2026-10-27 | Initial draft |
+| 1.1 | 2026-10-28 | Aligned with the LLD refinements ([LLD §17](low-level-design.md#17-refinements-to-the-hld)). R-1: binary frame header (§12.1). R-2: `CreateTopic` API (§6.3, §12.2). R-3: extended error codes (§12.3). R-4: credit-exact batch slicing (§6.2, §9.3). R-5: broker-wide `HwNotifier` (§6.2, §13). R-6: fencing only in the SQL CAS (§6.3, §8.2). R-7: HW over the union of current and pending ISR (§9.2, §9.9). Open issues OI-1 and OI-2 resolved (§20.2). |
+| 1.2 | 2026-10-28 | Testing reduced to functional tests only (SRS v1.1): `Clock` abstraction replaced by plain time helpers (§6.1, §17); test hook points removed; ThreadSanitizer optional (§17); hand-off item 8 updated (§20.3). Read-only `DescribeGroup` request added for observability (§12.2, LLD R-8). |
 
 ---
 
@@ -182,7 +190,7 @@ flowchart TB
     OP -- "drives" --> FI
     FI -- "kills / freezes / degrades" --> SYS
     SYS -- "logs + metrics CSV" --> OBS
-    CI -- "builds, tests under TSan" --> SYS
+    CI -- "builds, runs functional tests" --> SYS
 ```
 
 | External entity | Interaction | Interface |
@@ -192,7 +200,7 @@ flowchart TB
 | Operator | Configures, launches and observes | CLI, config files, Docker Compose, `make e<N>` scripts |
 | Fault injection | Perturbs processes and network | POSIX signals, `tc netem`, Toxiproxy HTTP API |
 | Analysis toolchain | Consumes metric output | CSV files plus run metadata JSON |
-| CI | Builds and verifies | CMake, CTest, sanitizers |
+| CI | Builds and verifies | CMake, functional tests (pytest) |
 
 ---
 
@@ -273,7 +281,7 @@ flowchart LR
         CFG["config"]
         LOG["logging (spdlog)"]
         MET["metrics (CSV sink)"]
-        CLK["Clock interface<br/>real / manual"]
+        CLK["time helpers<br/>steady / wall clock"]
         NET["socket utils<br/>blocking I/O, timeouts"]
     end
     subgraph proto["libprotocol"]
@@ -303,7 +311,7 @@ flowchart TB
 
         subgraph handlers["Request handlers"]
             HP["ProduceHandler"]
-            HF["FetchHandler<br/>credit-bounded, long-poll"]
+            HF["FetchHandler<br/>credit-exact, long-poll"]
             HR["ReplicaFetchHandler"]
             HL["LeaderAndIsrHandler"]
             HE["OffsetsForLeaderEpochHandler"]
@@ -319,10 +327,13 @@ flowchart TB
         RF["ReplicaFetcher<br/>1 thread per source leader"]
         CA["CoordinatorAgent<br/>register, heartbeat, AlterIsr"]
         RT["RetentionWorker<br/>periodic"]
+        HN["HwNotifier<br/>broker-wide, versioned"]
     end
 
     ACC --> CONN --> handlers
     HP & HF & HR & HL & HE --> RM --> replica
+    replica -- "bump on HW / LEO change" --> HN
+    HF & HR -. "wait for change" .-> HN
     RF --> RM
     RF -- "ReplicaFetch" --> EXT1(("other brokers"))
     CA -- "Register / BrokerHeartbeat / AlterIsr" --> EXT2(("coordinator"))
@@ -333,13 +344,14 @@ flowchart TB
 |---|---|
 | Acceptor / Connection handler | Accepts TCP connections. Each connection runs on its own thread: read frame, verify CRC, decode, dispatch, encode, write. Malformed frames close the connection (NFR-SEC-02). |
 | ProduceHandler | Validates leadership and leader epoch, appends to the log, waits until HW ≥ the batch's last offset (committed-ack) or times out. |
-| FetchHandler | Serves records in `[fetchOffset, HW)`, at most `credit` records and `maxBytes`. Long-polls on a per-partition condition variable. |
+| FetchHandler | Serves records in `[fetchOffset, HW)`, **exactly** at most `credit` records and `maxBytes`. Whole batches pass through unchanged. A batch that straddles `fetchOffset` or the credit boundary is **sliced** into a re-encoded sub-batch. When nothing is available it long-polls on the `HwNotifier`. |
 | ReplicaFetchHandler | Serves followers from `[fetchOffset, LEO)`. Records the follower's LEO. Updates ISR membership and HW. |
 | LeaderAndIsrHandler | Applies role changes and epochs pushed by the coordinator. Starts or stops the leader/follower state. |
 | ReplicaManager | Owns every `Replica` on the broker and routes requests to it by `(topic, partition)`. |
 | ReplicaFetcher | On followers, pulls from each leader and appends locally. Truncates divergent suffixes after an epoch change. |
 | CoordinatorAgent | Registers the broker, heartbeats, proposes ISR changes (`AlterIsr`) and waits for them to be accepted. |
 | RetentionWorker | Deletes closed segments that exceed the size or time retention. |
+| HwNotifier | Broker-wide versioned condition. Bumped on every HW or leader-LEO change. One consumer or replica fetch can span many partitions, so it waits on this single notifier instead of one condition per partition. Produce waiters still use a per-replica condition (§13). |
 
 ### 6.3 Group Coordinator
 
@@ -380,8 +392,8 @@ flowchart TB
 | Inbound queue | Puts every client request, broker request and timer tick into one total order (constraint C-04, FR-GRP-09). |
 | GroupManager | Runs the group state machine ([§10.1](#101-consumer-group-coordinator-side)), joins and leaves, the rebalance barrier, session-timeout eviction and generation bumps. |
 | Assignor | Pure function `(members, partitions, previousAssignment) → assignment`. Deterministic and balanced (FR-ASSIGN-05/06). |
-| OffsetManager | Fenced commit through one SQLite CAS statement. OffsetFetch. |
-| MetadataManager | Topics, partitions, replica placement, leader, leader epoch, ISR. Answers Metadata requests. |
+| OffsetManager | Fenced commit through one SQLite CAS statement, which is the **only** fencing check. There is no in-memory membership pre-check, so a commit from an evicted (zombie) member is rejected by the CAS with `STALE_EPOCH`. OffsetFetch. |
+| MetadataManager | Topics, partitions, replica placement, leader, leader epoch, ISR. Answers `Metadata`, handles `CreateTopic` (initial replica placement) and `AlterIsr`. |
 | BrokerLiveness / LeaderElector | Detects broker death by heartbeat timeout, elects a new leader from the ISR, bumps the leader epoch. |
 | Repository | Every state mutation is persisted in a SQLite transaction **before** the reply is released (P4). |
 | Deferred replies | `JoinGroup` replies are held until the rebalance barrier completes. The connection thread blocks on its reply handle. |
@@ -547,6 +559,7 @@ ACCEPT commit(g, p, offset, epoch, member)  ⇔
     ownership[g,p].owner = member  ∧  ownership[g,p].ownerEpoch = epoch
 ```
 
+- This predicate, evaluated by the SQL statement, is the **single source of truth** for fencing. The coordinator does not check membership in memory first. A rejected commit always returns `STALE_EPOCH`, and that code is used for nothing else (leader-epoch fencing has its own `FENCED_LEADER_EPOCH`).
 - Monotonicity (INV-03) follows from fencing plus process-then-commit. It is **asserted in tests, not clamped in the store**, so the E5 control run with fencing disabled can show regressions (ADR-06).
 
 ---
@@ -584,8 +597,10 @@ sequenceDiagram
     participant F3 as Follower (B3)
 
     P->>L: Produce(topic, p, leaderEpoch=7, batch)
-    alt epoch stale or not leader
+    alt not leader or request epoch older than leader's
         L-->>P: NOT_LEADER(currentLeader)
+    else request epoch newer than leader's
+        L-->>P: FENCED_LEADER_EPOCH
     else ISR size below minISR
         L-->>P: NOT_ENOUGH_REPLICAS
     else accepted
@@ -602,13 +617,15 @@ sequenceDiagram
             F3->>F3: append
             F3->>L: ReplicaFetch(p, newLEO)
         end
-        L->>L: HW = min LEO over ISR
+        L->>L: HW = min LEO over (ISR ∪ pending ISR)
         L-->>P: OK(baseOffset)  once HW > lastOffset
-        L-->>L: notify long-polling consumer fetches
+        L-->>L: bump HwNotifier (wakes long-polling fetches)
     end
 ```
 
 **Commit rule (ADR-03).** A record is committed when **every current ISR member** has persisted it **and** |ISR| ≥ `minISR` (default 2 for R = 3). Leaders are elected only from the ISR, so any new leader holds every committed record. This is the write-up's "quorum of the ISR" in a form that is lossless on failover.
+
+While an `AlterIsr` is in flight, HW is computed over the **union** of the current and the proposed ISR (§9.9). Neither a shrink nor an expansion can then expose a record that the coordinator's view of the ISR does not hold.
 
 ### 9.3 Consumer Fetch with Credit
 
@@ -626,9 +643,10 @@ sequenceDiagram
             CF->>CF: wait on not-full condition (no fetch)
         else free > 0
             CF->>L: Fetch(p, position, credit=free, maxWaitMs)
-            L->>L: read [position, HW), cap by credit and maxBytes
+            L->>L: read [position, HW), cap by maxBytes
+            L->>L: slice boundary batches so records ≤ credit exactly
             alt nothing available
-                L->>L: long-poll until HW moves or maxWaitMs
+                L->>L: long-poll on HwNotifier until HW moves or maxWaitMs
             end
             L-->>CF: records (≤ credit)
             CF->>Q: push records, position += n
@@ -790,13 +808,14 @@ sequenceDiagram
     participant DB as SQLite
 
     L->>L: follower F lag > replica.lag.time.max.ms
+    L->>L: pendingISR = ISR \ {F}, HW still computed over ISR ∪ pendingISR
     L->>GC: AlterIsr(P0, epoch 7, newISR = ISR \ {F})
     GC->>DB: persist ISR
     GC-->>L: OK
-    L->>L: apply new ISR, then recompute HW
+    L->>L: ISR = pendingISR, clear pendingISR, recompute HW
 ```
 
-The leader advances HW under a smaller ISR **only after** the coordinator has persisted it. Otherwise the coordinator could elect `F`, which lacks records already exposed as committed. ISR **expansion** is applied the same way, after the follower has caught up to HW.
+The leader advances HW under a smaller ISR **only after** the coordinator has persisted it. Until then, the "maximal ISR" (current ∪ pending) still includes `F`. Otherwise the coordinator could elect `F`, which lacks records already exposed as committed. ISR **expansion** is applied the same way, after the follower has caught up to HW.
 
 ---
 
@@ -950,21 +969,24 @@ erDiagram
 ### 12.1 Framing and Encoding
 
 ```
-┌──────────────┬────────────────────────────────────────┬────────────┐
-│ length (u32) │ header (JSON) | body (JSON or MsgPack) │ crc32c(u32)│
-│  big-endian  │ {type, version, correlationId, ...}    │            │
-└──────────────┴────────────────────────────────────────┴────────────┘
+┌──────────────┬──────────────────────────────────────┬──────────────────────┬─────────────┐
+│ length (u32) │ fixed binary header (12 bytes)       │ body                 │ crc32c (u32)│
+│  big-endian  │ magic · version · apiKey ·           │ JSON (control) or    │ over header │
+│              │ correlationId · encoding · flags     │ MessagePack (data)   │ + body      │
+└──────────────┴──────────────────────────────────────┴──────────────────────┴─────────────┘
 ```
 
-- Control-plane bodies are JSON, chosen for debuggability. Record payloads (Produce, Fetch, ReplicaFetch) are MessagePack, chosen for volume.
-- `max.frame.bytes` is enforced before allocation. A CRC mismatch returns `CORRUPT_MESSAGE` and the connection is closed.
-- Byte-level header layout and the request/response schemas are defined in the LLD.
+- The header is a **fixed 12-byte binary** structure, so a receiver can validate, route and match responses without parsing the body, and the CRC does not depend on the body encoding.
+- Control-plane bodies are JSON, chosen for debuggability. Record payloads (Produce, Fetch, ReplicaFetch) are MessagePack, chosen for volume. The `encoding` header byte says which.
+- `max.frame.bytes` is enforced before allocation. A bad magic byte or CRC mismatch returns `CORRUPT_MESSAGE` and the connection is closed.
+- The byte-exact layout and every request/response schema are in [LLD §4](low-level-design.md#4-wire-protocol-protocol).
 
 ### 12.2 Request Routing
 
 | Request | Client → Server | Handled by | Blocking semantics |
 |---|---|---|---|
 | `Metadata` | any → Coordinator | MetadataManager | Immediate |
+| `CreateTopic` | `elogctl` → Coordinator | MetadataManager | Immediate, after persist. Idempotent for an identical spec. |
 | `RegisterBroker`, `BrokerHeartbeat` | Broker → Coordinator | BrokerLiveness | Immediate |
 | `AlterIsr` | Leader → Coordinator | MetadataManager | Immediate, after persist |
 | `LeaderAndIsr` | Coordinator → Broker | LeaderAndIsrHandler | Immediate |
@@ -975,20 +997,30 @@ erDiagram
 | `JoinGroup` | Consumer → Coordinator | GroupManager | **Held until rebalance completes** |
 | `Heartbeat`, `LeaveGroup` | Consumer → Coordinator | GroupManager | Immediate |
 | `OffsetCommit`, `OffsetFetch` | Consumer → Coordinator | OffsetManager | Immediate, after persist |
+| `DescribeGroup` | `elogctl` → Coordinator | GroupManager (read-only) | Immediate |
 
 ### 12.3 Error Handling Policy (client side)
 
 | Error | Retriable | Client action |
 |---|---|---|
 | `NOT_LEADER` | Yes | Refresh metadata, retry against the new leader |
+| `FENCED_LEADER_EPOCH` | Yes | Refresh metadata, retry (receiver has an older or newer leader epoch than the request) |
+| `UNKNOWN_TOPIC_OR_PARTITION` | Yes | Refresh metadata, retry |
 | `NOT_ENOUGH_REPLICAS` | Yes | Back off, retry |
 | `THROTTLED` | Yes | Back off by the hinted duration |
+| `REQUEST_TIMED_OUT` | Yes | Retry (may duplicate records in the log; accepted under at-least-once) |
 | `REBALANCE_IN_PROGRESS` | Yes | Commit, revoke, rejoin |
-| `STALE_EPOCH` | No (for this ownership) | Drop affected partitions, rejoin |
+| `STALE_EPOCH` | No (for this ownership) | **Offset commits only.** Drop affected partitions, rejoin. |
+| `ILLEGAL_GENERATION` | No (for this generation) | Rejoin |
 | `UNKNOWN_MEMBER` | No (for this membership) | Reset member id, rejoin |
 | `OFFSET_OUT_OF_RANGE` | No | Apply `auto.offset.reset` |
+| `INVALID_PARTITION_COUNT` | No | Surface to the operator (topic exists with a different partition count) |
+| `STALE_BROKER_INCARNATION` | No | Broker re-registers |
+| `UNSUPPORTED_VERSION`, `INVALID_REQUEST` | No | Bug or version mismatch. Fail fast with a logged error. |
 | `CORRUPT_MESSAGE` | Yes (on a new connection) | Reconnect, retry |
 | Socket error / timeout | Yes | Reconnect with backoff, refresh metadata |
+
+The numeric codes are listed in [LLD §4.4](low-level-design.md#44-error-codes).
 
 Retries are bounded (`retries`, `retry.backoff.ms` with jitter). Producer retries can duplicate records in the log; this is accepted under at-least-once (no idempotent producer).
 
@@ -998,7 +1030,7 @@ Retries are bounded (`retries`, `retry.backoff.ms` with jitter). Producer retrie
 
 | Process | Threads | Shared state and synchronisation |
 |---|---|---|
-| **Broker** | Acceptor ×1; connection ×N (one per socket); ReplicaFetcher ×(number of source leaders); CoordinatorAgent ×1; RetentionWorker ×1 | Per-`Replica` mutex guards appends and leader state. HW and LEO are published as `std::atomic<uint64_t>`. A per-partition `condition_variable` wakes long-polls and produce waiters. Closed segments are immutable, so reads need no lock. |
+| **Broker** | Acceptor ×1; connection ×N (one per socket); ReplicaFetcher ×(number of source leaders); CoordinatorAgent ×1; RetentionWorker ×1 | Per-`Replica` mutex guards appends and leader state. HW and LEO are published as `std::atomic<uint64_t>`. A per-replica `condition_variable` wakes produce waiters. The broker-wide `HwNotifier` wakes long-polling consumer and replica fetches, which may span many partitions. Closed segments are immutable, so reads need no lock. |
 | **Coordinator** | Acceptor ×1; connection ×N (I/O only); **event loop ×1**; Ticker ×1; LeaderAndIsr pusher ×1 | **Only the event loop touches group, metadata and SQLite state.** Connection threads enqueue `(request, replyHandle)` and block on the handle. The ticker enqueues `Tick` events. No locks guard domain state. |
 | **Consumer** | Main/processing ×1; Fetcher ×1; Heartbeat ×1 | The bounded in-flight queue (mutex + two condvars) connects fetcher and processor. Assignment changes cross threads via a versioned, mutex-guarded snapshot. |
 | **Producer** | Caller threads; Sender ×1 | Bounded accumulator (mutex + condvar). Callers block when it is full. |
@@ -1043,7 +1075,7 @@ flowchart LR
 | `buffer.memory` | Producer accumulator | `send()` blocks the caller |
 | `max.pending.produce` | Leader, per partition | The connection thread stops reading the socket, so TCP backpressure reaches the producer |
 | `consumer.inflight.max` (Q) | Consumer | Credit is 0, so no fetch is issued |
-| `fetch.max.bytes` and credit | Broker FetchHandler | The response size is bounded, so broker memory per fetch is bounded |
+| `fetch.max.bytes` and credit | Broker FetchHandler | Response size is bounded, and record count is **exactly** ≤ credit (boundary batches are sliced), so broker memory per fetch is bounded |
 | `max.frame.bytes` | All receivers | Oversized frames are rejected before allocation |
 | `retention.bytes` | Broker disk | Oldest closed segments are deleted |
 
@@ -1120,11 +1152,11 @@ The binaries and configuration are the same; only the addresses differ. For exam
 | **Configuration** | Layered: built-in defaults < config file < CLI flags. Effective config logged at startup and written to `run.json` (IF-10/11). |
 | **Logging** | spdlog, structured key=value. Mandatory fields: `ts`, `component`, `node`, plus `group`, `topic`, `partition`, `generation`, `epoch` where relevant. |
 | **Metrics** | An in-process registry flushed periodically to per-process CSV (`ts, node, metric, labels, value`). Events such as rebalance start/end, fence rejection, leader change and fault injection go to a separate events CSV for timeline alignment. |
-| **Time** | All timeout logic goes through a `Clock` interface (real or manual) for deterministic tests (NFR-TEST-05). Wall time is used only for metric timestamps. |
-| **Fault hooks** | `--crash-after-process`, and env-guarded test hooks at defined points (for example after append and before ack). Fencing toggle (`coordinator.fencing.enabled`, default `true`); when off, a `FENCING_DISABLED` banner appears in logs and `run.json`. |
-| **Testing seams** | Assignors are pure functions. Storage has no network dependency. The coordinator event loop can be driven synchronously in tests. |
+| **Time** | Timeouts and deadlines use the monotonic clock (`std::chrono::steady_clock`) through two small helpers. Wall time is used only for record and metric timestamps. |
+| **Fault hooks** | `--crash-after-process` on the consumer. Fencing toggle (`coordinator.fencing.enabled`, default `true`); when off, a `FENCING_DISABLED` banner appears in logs and `run.json`. Everything else is injected from outside (signals, network). |
+| **Testing** | Functional tests only (SRS §5.7): pytest scenarios start real processes, inject faults and check outcomes through `elogctl`, consumed records and the CSV outputs. |
 | **Security** | Binds to the container network or loopback. Input is length- and CRC-validated. No authentication or TLS (out of scope, NFR-SEC-03). |
-| **Build** | CMake targets `common`, `protocol`, `storage`, `broker`, `coordinator`, `elog` (client), `tools`. Presets `dev` (ASan+UBSan), `tsan`, `release`. |
+| **Build** | CMake targets `common`, `protocol`, `storage`, `broker`, `coordinator`, `elog` (client), `tools`. Presets `dev` (ASan+UBSan) and `release`, plus an optional `tsan` preset for a pre-submission race check. |
 
 ---
 
@@ -1135,16 +1167,18 @@ Summary form. Full ADRs, if needed, go in `docs/adr/`.
 | ADR | Decision | Alternatives considered | Rationale | Consequence |
 |---|---|---|---|---|
 | **ADR-01** | One coordinator process owns **both** group coordination and cluster metadata / leader election | Raft-replicated controller; ZooKeeper / etcd | Scope fits a course project. A single serialisation point makes epochs trivially monotonic. | Documented SPOF (L-01); durable state survives restart |
-| **ADR-02** | Coordinator is a **single-threaded event loop** behind an MPSC queue | Fine-grained locking | Atomic generation and epoch updates by construction; no deadlocks; easy reasoning under TSan | Throughput bounded by one core (ample for ~30 connections) |
+| **ADR-02** | Coordinator is a **single-threaded event loop** behind an MPSC queue | Fine-grained locking | Atomic generation and epoch updates by construction; no deadlocks; easy to reason about | Throughput bounded by one core (ample for ~30 connections) |
 | **ADR-03** | Commit = **all-ISR ack with minISR ≥ ⌈(R+1)/2⌉**; election **from the ISR only** | Majority quorum plus longest-log election | Every ISR member holds every committed record, so any ISR member is a safe leader. Election is simple. | A slow follower delays HW until it is dropped from the ISR (bounded by lag time) |
 | **ADR-04** | **Per-partition ownership epoch** for fencing, distinct from group generation | Fence on group generation | Lets sticky assignment keep retained partitions committing across rebalances | One extra persisted integer per (group, partition) |
 | **ADR-05** | Fencing via one **SQLite conditional UPDATE** (CAS) | Read-check-write in application code | Race-free in one statement and auditable; matches the write-up | Commit latency includes an fsync (WAL) |
-| **ADR-06** | Offset **monotonicity is verified, not clamped** | Store-side `offset >= current` guard | A clamp would hide regressions and make the E5 control run meaningless | Monotonicity rests on fencing (asserted by property tests) |
+| **ADR-06** | Offset **monotonicity is verified, not clamped** | Store-side `offset >= current` guard | A clamp would hide regressions and make the E5 control run meaningless | Monotonicity rests on fencing (checked by the E5 functional test and experiment) |
 | **ADR-07** | **Server-side assignment** (coordinator runs the assignor) | Kafka-style leader-consumer assignment | Simpler protocol; deterministic; a single place to compare eager vs. sticky | Assignor changes need a coordinator restart (config only) |
 | **ADR-08** | **Blocking I/O, thread-per-connection** | epoll / io_uring / coroutines | Adequate at about 30 connections; avoids coroutine lifetime bugs; natural TCP backpressure | Does not scale to thousands of connections (L-03) |
 | **ADR-09** | **Credit-based fetch** with a bounded consumer in-flight queue | Unbounded prefetch; byte-based window only | Memory bounded by construction (E7); explicit and measurable | Credit is counted in records; bytes are capped separately by `fetch.max.bytes` |
 | **ADR-10** | **Leader-epoch-based follower truncation** | Truncate to HW | Avoids the known HW-truncation data-loss and divergence anomalies | A leader-epoch checkpoint is kept per partition |
-| **ADR-11** | **JSON control plane, MessagePack data plane** | Protobuf everywhere | Readable control traffic for debugging; compact payloads | Two codecs to maintain |
+| **ADR-11** | **JSON control plane, MessagePack data plane**, behind a fixed binary frame header | Protobuf everywhere; JSON header | Readable control traffic for debugging; compact payloads; dispatch without parsing the body | Two codecs to maintain |
+| **ADR-12** | **Credit-exact fetch by slicing boundary batches** | Whole batches only (may exceed credit) | FR-FETCH-04 requires "no more than credit". A batch larger than Q could otherwise never be delivered. | Re-encodes at most two batches per partition per fetch |
+| **ADR-13** | **HW over the union of current and pending ISR** during `AlterIsr` | Apply the ISR change locally first | Keeps the leader's commit decisions consistent with the coordinator's persisted ISR, so an election can never pick a replica missing committed data | A shrink only speeds up HW after the coordinator round-trip |
 
 ---
 
@@ -1186,14 +1220,14 @@ Summary form. Full ADRs, if needed, go in `docs/adr/`.
 
 | # | Issue | Proposed resolution | Owner |
 |---|---|---|---|
-| OI-1 | Partition hash function | murmur3-32, fixed seed | LLD |
-| OI-2 | Default values: session timeout, heartbeat interval, lag time, broker timeout | Proposed: 6 s / 2 s / 10 s / 6 s. Finalise during E3 calibration. | LLD |
+| OI-1 | Partition hash function | **Resolved:** MurmurHash3 x86_32, seed `0x9747b28c` ([LLD §10.2](low-level-design.md#102-partitioner)) | Decided |
+| OI-2 | Default values: session timeout, heartbeat interval, lag time, broker timeout | **Resolved:** 6 s / 2 s / 10 s / 6 s, re-checked during E3 calibration ([LLD §12](low-level-design.md#12-configuration-catalogue)) | Decided |
 | OI-3 | Should brokers verify consumer ownership on fetch? | No. Fencing protects offsets. Zombie reads only cause duplicate processing (allowed). | Decided |
 | OI-4 | Group expiry for `Empty` groups | Retain offsets indefinitely within the project scope | Decided |
 
 ### 20.3 Hand-off to Low-Level Design
 
-The LLD must specify:
+All items below are covered in [low-level-design.md](low-level-design.md). Refinements made there are reflected in this revision (v1.1). The LLD must specify:
 
 1. **Class-level design** for each component in §6: interfaces, ownership and lifetimes (RAII, smart pointers), and the thread affinity of each method.
 2. **Wire protocol:** byte-exact frame header, the JSON schema per control request and response, the MessagePack layout of record batches, and protocol versioning.
@@ -1202,5 +1236,5 @@ The LLD must specify:
 5. **SQLite DDL** and the exact fenced CAS statement, plus transaction boundaries per request.
 6. **Configuration catalogue:** every key, its default, valid range and owning component.
 7. **Metric catalogue:** every metric, event, CSV column and plot it feeds.
-8. **Test design:** unit, property (RapidCheck generators per invariant) and integration scenarios mapped to E1–E9.
+8. **Test design:** functional scenarios per feature, mapped to the invariants and E1–E9.
 9. **Source tree layout** and CMake target graph.

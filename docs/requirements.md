@@ -7,10 +7,17 @@
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Course | Distributed Systems |
 | Document type | Functional & Non-Functional Requirements Specification |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Draft for review |
-| Date | 2026-10-26 |
+| Date | 2026-10-28 |
 | Source | [writeup.pdf](writeup.pdf) (Project Write-Up, 2026-10-16) |
+
+### Revision History
+
+| Version | Date | Changes |
+|---|---|---|
+| 1.0 | 2026-10-26 | Initial draft |
+| 1.1 | 2026-10-28 | Testing scope reduced to **functional tests only**: unit tests, property-based tests and the injectable clock withdrawn (NFR-TEST-01/02/05); ThreadSanitizer becomes a pre-submission check (NFR-CONC-01 → Should); `rr` and clang-tidy dropped (NFR-CONC-03, NFR-MAINT-01). Invariants are now checked by functional tests and experiments (§6, §9.2, D3). |
 
 ---
 
@@ -59,13 +66,14 @@ This document specifies the functional and non-functional requirements for a Kaf
 - Authentication, authorization, and encryption in transit or at rest.
 - Multi-datacenter replication, log compaction, schema registry, and wire compatibility with Apache Kafka.
 - Production-grade throughput optimisation; throughput is reported as context only.
+- Unit tests and property-based tests. This is a course project: correctness is shown through functional tests and the experiments (§5.7).
 
 ### 1.3 Intended Audience
 
 | Reader | Uses this document to |
 |---|---|
 | Implementers | Know what each component must do and the constraints it must meet |
-| Test authors | Derive unit, integration, property-based and fault-injection tests |
+| Test authors | Derive functional tests (multi-process scenarios, including fault injection) |
 | Course staff / reviewers | Assess completeness and judge results against stated predictions |
 
 ### 1.4 Requirement Conventions
@@ -103,7 +111,7 @@ The system is a self-contained, from-scratch implementation in C++20. It does no
 | Producer client | Application that publishes records through the client library |
 | Consumer client | Group member that fetches, processes, and commits offsets |
 | Operator / experimenter | Starts clusters, injects faults, runs experiments, collects metrics |
-| Test harness | Automated suites (unit, integration, property-based, fault-injection) |
+| Test harness | Automated functional test suite: starts real processes, injects faults, checks outcomes |
 
 ### 2.4 Design and Implementation Constraints
 
@@ -355,9 +363,9 @@ The system is a self-contained, from-scratch implementation in C++20. It does no
 
 | ID | Requirement | Target / Metric | Priority | Verify |
 |---|---|---|---|---|
-| NFR-CONC-01 | The codebase is free of data races. | Clean ThreadSanitizer run of the full test suite in CI | Must | T |
+| NFR-CONC-01 | The codebase is free of data races. | Functional test suite runs clean under ThreadSanitizer at least once before submission | Should | T |
 | NFR-CONC-02 | The codebase is free of memory errors and undefined behaviour. | Clean ASan + UBSan runs in development | Must | T |
-| NFR-CONC-03 | Concurrency bugs found in testing can be reproduced deterministically. | `rr` recording available for race replay | Should | I |
+| NFR-CONC-03 | *Withdrawn in v1.1* (deterministic race replay with `rr`). | — | — | — |
 
 ### 5.5 Scalability — `NFR-SCAL`
 
@@ -371,7 +379,7 @@ The system is a self-contained, from-scratch implementation in C++20. It does no
 
 | ID | Requirement | Priority | Verify |
 |---|---|---|---|
-| NFR-MAINT-01 | Code shall be formatted with clang-format and pass clang-tidy with the project configuration; CI shall enforce both. | Must | I |
+| NFR-MAINT-01 | Code shall be formatted with clang-format using the project configuration. | Must | I |
 | NFR-MAINT-02 | Broker, coordinator, client library and storage engine shall be separate CMake targets with defined interfaces. | Must | I |
 | NFR-MAINT-03 | The repository shall build from a clean checkout with one CMake configure + build command, fetching dependencies with FetchContent. | Must | D |
 | NFR-MAINT-04 | Public interfaces, wire protocol and on-disk format shall be documented in the repository. | Must | I |
@@ -379,13 +387,15 @@ The system is a self-contained, from-scratch implementation in C++20. It does no
 
 ### 5.7 Testability — `NFR-TEST`
 
+**Testing approach (v1.1):** functional tests only. Each test starts real broker, coordinator and client processes, drives them through their public interfaces (CLI, wire protocol), and checks observable outcomes (consumed records, `elogctl` output, metric and event CSVs). There are no unit or property-based tests.
+
 | ID | Requirement | Priority | Verify |
 |---|---|---|---|
-| NFR-TEST-01 | Unit tests (GoogleTest/Catch2) shall cover storage, index, partitioner, assignors, fencing and protocol framing. | Must | T |
-| NFR-TEST-02 | Property-based tests (RapidCheck) shall check the correctness invariants of [Section 6](#6-correctness-invariants) over randomised operation sequences. | Must | T |
-| NFR-TEST-03 | Integration tests shall start multi-process clusters and run fault scenarios automatically. | Must | T |
-| NFR-TEST-04 | CI shall run the full suite on every push to the main branch and on every pull request. | Must | I |
-| NFR-TEST-05 | Timing-dependent logic (heartbeats, session timeouts, ISR lag) shall use an injectable clock, so tests can run deterministically. | Should | I |
+| NFR-TEST-01 | *Withdrawn in v1.1* (unit tests). | — | — |
+| NFR-TEST-02 | *Withdrawn in v1.1* (property-based tests). | — | — |
+| NFR-TEST-03 | Functional tests shall start multi-process clusters, exercise each feature end to end, and run fault scenarios (kill, freeze, restart) automatically. | Must | T |
+| NFR-TEST-04 | CI shall build the project and run the functional suite on every push to the main branch. | Should | I |
+| NFR-TEST-05 | *Withdrawn in v1.1* (injectable clock). | — | — |
 
 ### 5.8 Reproducibility — `NFR-REPRO`
 
@@ -417,19 +427,19 @@ The system is a self-contained, from-scratch implementation in C++20. It does no
 
 ## 6. Correctness Invariants
 
-These invariants are binary pass/fail. They shall be asserted in the automated test suite (property-based where possible) and checked in the relevant experiments.
+These invariants are binary pass/fail. They shall be checked by the functional test suite and by the analysis of the relevant experiments.
 
 | ID | Invariant | Checked by |
 |---|---|---|
-| INV-01 | **Per-partition order.** Within a partition, consumers observe records in strictly increasing offset order, and same-key records keep produce order. | E1, property tests |
-| INV-02 | **Single ownership.** At no generation is any partition assigned to more than one consumer. | E2, E4, property tests |
-| INV-03 | **Monotonic committed offset.** With fencing enabled, the committed offset for a `(group, partition)` never decreases. | E5, property tests |
-| INV-04 | **Fencing.** Every commit carrying a generation older than the current one is rejected and leaves state unchanged. | E5, unit tests |
+| INV-01 | **Per-partition order.** Within a partition, consumers observe records in strictly increasing offset order, and same-key records keep produce order. | E1, functional tests |
+| INV-02 | **Single ownership.** At no generation is any partition assigned to more than one consumer. | E2, E4, functional tests |
+| INV-03 | **Monotonic committed offset.** With fencing enabled, the committed offset for a `(group, partition)` never decreases. | E5, functional tests |
+| INV-04 | **Fencing.** Every commit carrying a generation older than the current one is rejected and leaves state unchanged. | E5, functional tests |
 | INV-05 | **No skipped records.** After any crash/recovery, every record below the high watermark is delivered at least once to the group. | E2, E8, E9 |
 | INV-06 | **Committed durability.** At `R = 3`, no record below the high watermark is lost when any single broker fails. | E6 |
-| INV-07 | **Committed-only reads.** No consumer observes a record at or above the high watermark. | E6, unit tests |
-| INV-08 | **Monotonic generation / epoch.** Group generations and leader epochs strictly increase. | Unit and property tests |
-| INV-09 | **Bounded memory.** In-flight queue depth never exceeds its configured bound. | E7, unit tests |
+| INV-07 | **Committed-only reads.** No consumer observes a record at or above the high watermark. | E6, functional tests |
+| INV-08 | **Monotonic generation / epoch.** Group generations and leader epochs strictly increase. | Functional tests (including coordinator restart) |
+| INV-09 | **Bounded memory.** In-flight queue depth never exceeds its configured bound. | E7, functional tests |
 | INV-10 | **Bounded duplication.** Duplicates caused by one consumer crash do not exceed the commit interval. | E8 |
 
 ---
@@ -504,9 +514,9 @@ These invariants are binary pass/fail. They shall be asserted in the automated t
 | Replication | Leader/follower, ISR, quorum ack, coordinator-appointed leaders |
 | Assignment | Round-robin (eager) and sticky |
 | Fault injection | `SIGSTOP`, `SIGKILL`, `--crash-after-process`, `tc netem` / Toxiproxy |
-| Testing | GoogleTest/Catch2, RapidCheck, ASan + UBSan, ThreadSanitizer (CI), `rr` |
+| Testing | Functional tests in Python (pytest) driving the real binaries; ASan + UBSan in development builds; ThreadSanitizer before submission |
 | Observability | spdlog, CSV export, pandas + matplotlib |
-| Workflow | Git/GitHub + CI, clang-format/clang-tidy, Docker Compose |
+| Workflow | Git/GitHub + CI, clang-format, Docker Compose |
 
 ### 8.3 Privileges and Optional Infrastructure
 
@@ -540,7 +550,7 @@ Each experiment shall be scripted, runnable with one command (FR-OPS-03), and pr
 The project is accepted when all of the following hold:
 
 1. All **Must** requirements are implemented, or their absence is justified in the final report.
-2. All correctness invariants INV-01…INV-10 hold in the automated test suite, which passes in CI under ThreadSanitizer.
+2. All correctness invariants INV-01…INV-10 hold in the functional test suite and the experiment checks.
 3. E5 and E8 are demonstrated live, with the results above.
 4. Every figure in the final report can be regenerated from committed raw CSV by the plotting scripts.
 5. Every quantitative prediction in §9.1 is evaluated against measurement. **Predictions the measurements contradict are reported as findings, with analysis, not hidden or treated as failures.**
@@ -566,7 +576,7 @@ The project is accepted when all of the following hold:
 |---|---|---|
 | D1 | Documented C++20 repository with CMake build: broker, coordinator, client library | NFR-MAINT-\*, IF-07…09 |
 | D2 | Nine scripted demo scenarios (E1–E9), each runnable with one command | FR-OPS-03 |
-| D3 | Automated unit, integration and property-based test suite, run in CI under ThreadSanitizer | NFR-TEST-\*, NFR-CONC-01 |
+| D3 | Automated functional test suite (multi-process scenarios with fault injection), run in CI | NFR-TEST-03/04, NFR-CONC-01 |
 | D4 | Raw CSV metric exports, with plotting scripts that generate every figure | FR-OBS-02/03, NFR-REPRO-05 |
 | D5 | Final report evaluating measurements against the predictions | §9.2 |
 | D6 | Live demonstration of fencing (E5) and duplicate delivery (E8) | FR-OFF-\*, FR-DEL-\* |
@@ -591,7 +601,7 @@ The project is accepted when all of the following hold:
 | Lab compilers are too old for C++20 | High | Medium | Pinned build container (NFR-PORT-02) |
 | `NET_ADMIN` is unavailable | Medium | Low | Toxiproxy fallback (NFR-PORT-03) |
 | Loopback hides real replication lag | Medium | Medium | Emulated latency; optional RCE multi-node runs |
-| Timing-sensitive tests are flaky in CI | Medium | Medium | Injectable clock (NFR-TEST-05); `rr` replay |
+| Timing-sensitive functional tests are flaky | Medium | Medium | Wait on conditions with deadlines instead of fixed sleeps; generous timeouts in tests |
 | Contention from fsync dominates measurements | Medium | Low | Record fsync policy per run; keep it fixed within each comparison |
 | No RCE allocation | Medium | Low | No deliverable depends on it |
 
