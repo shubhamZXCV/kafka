@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
 
+#include "elog/common/result.h"
 #include "elog/common/types.h"
 
 namespace elog {
@@ -97,6 +99,40 @@ private:
     std::uint32_t count_ = 0;
     TimeMs firstTimestampMs_ = 0;
     TimeMs maxTimestampMs_ = 0;
+};
+
+// One record, decoded from a batch. key and value point into the batch's bytes.
+struct Record {
+    Offset offset = 0;  // absolute: baseOffset + offsetDelta
+    TimeMs timestampMs = 0;
+    std::optional<std::span<const std::byte>> key;
+    std::span<const std::byte> value;
+};
+
+// A read-only view over the bytes of exactly one batch, after validation. Does not own the
+// bytes; they must outlive the view. The header is read from the bytes on every call, so
+// the view stays correct after stampBatch() changes baseOffset or leaderEpoch.
+class RecordBatchView {
+public:
+    // Validates untrusted bytes (from a producer, a replica or the disk): size, batchLength,
+    // magic, CRC (FR-LOG-07), attributes, record count, and every record's encoding. Any
+    // failure is CORRUPT_MESSAGE.
+    static Result<RecordBatchView> parse(std::span<const std::byte> bytes);
+
+    Offset baseOffset() const;
+    Offset lastOffset() const;  // baseOffset + lastOffsetDelta
+    Epoch leaderEpoch() const;
+    std::uint32_t recordCount() const;
+    TimeMs maxTimestampMs() const;
+    std::span<const std::byte> bytes() const { return bytes_; }
+
+    // Calls fn for each record in offset order. Record spans are valid while the bytes are.
+    void forEachRecord(const std::function<void(const Record&)>& fn) const;
+
+private:
+    explicit RecordBatchView(std::span<const std::byte> bytes) : bytes_(bytes) {}
+
+    std::span<const std::byte> bytes_;
 };
 
 }  // namespace elog
