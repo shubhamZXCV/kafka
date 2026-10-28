@@ -1,6 +1,7 @@
 add_library(elog_protocol STATIC
     api_keys.cc
-    error_codes.cc)
+    error_codes.cc
+    frame.cc)
 
 target_include_directories(elog_protocol PUBLIC include)
 target_link_libraries(elog_protocol PUBLIC elog_common)
