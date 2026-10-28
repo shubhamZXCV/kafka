@@ -11,3 +11,4 @@
 # A module is added here when its first source file lands.
 
 add_subdirectory(common)
+add_subdirectory(protocol)
