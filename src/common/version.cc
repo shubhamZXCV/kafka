@@ -2,6 +2,8 @@
 
 namespace elog {
 
-std::string_view versionString() { return ELOG_VERSION; }
+std::string_view versionString() {
+    return ELOG_VERSION;
+}
 
 }  // namespace elog
