@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <vector>
 
 #include "elog/common/types.h"
 
@@ -68,5 +70,33 @@ void writeBatchHeader(std::span<std::byte> out, const RecordBatchHeader& header)
 // Reads all header fields from in[0, kHeaderBytes). in must be at least that long; the
 // values are not validated here.
 RecordBatchHeader readBatchHeader(std::span<const std::byte> in);
+
+// Collects records and encodes them as one batch (LLD §4.5). Used by the producer's
+// accumulator, and by sliceBatch to re-encode part of a batch.
+//
+//     RecordBatchBuilder builder;
+//     builder.add(key, value, time::wallMs());
+//     std::vector<std::byte> bytes = builder.build();   // baseOffset and leaderEpoch are 0
+//
+// Not thread-safe: one owner at a time.
+class RecordBatchBuilder {
+public:
+    // Encodes the record now; its offsetDelta is its position in the batch. key may be absent.
+    void add(std::optional<std::span<const std::byte>> key, std::span<const std::byte> value,
+             TimeMs timestampMs);
+
+    // Size of the batch build() would return.
+    std::size_t estimatedBytes() const { return batch::kHeaderBytes + records_.size(); }
+    std::uint32_t count() const { return count_; }
+
+    // The finished batch with its CRC. Requires count() >= 1.
+    std::vector<std::byte> build() const;
+
+private:
+    std::vector<std::byte> records_;  // the encoded records, back to back
+    std::uint32_t count_ = 0;
+    TimeMs firstTimestampMs_ = 0;
+    TimeMs maxTimestampMs_ = 0;
+};
 
 }  // namespace elog
