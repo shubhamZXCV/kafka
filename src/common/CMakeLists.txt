@@ -1,6 +1,8 @@
 add_library(elog_common STATIC
     config.cc
+    events.cc
     logging.cc
+    metrics.cc
     socket.cc
     version.cc)
 
