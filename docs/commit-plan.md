@@ -119,7 +119,7 @@ a later row, stop and propose a split or reorder instead of improvising.
 | # | Task | Commit summary | What it adds | Read carefully / learn | See it work | Size |
 |---|---|---|---|---|---|---|
 | C001 | — | `docs(repo): add requirements, design and planning documents` | `docs/*.md`, `docs/writeup.pdf` | The spec baseline; nothing to review | — | — |
-| C002 | T0.1 | `build(repo): add root CMake project and module layout` | `CMakeLists.txt`, one `CMakeLists.txt` per module with empty targets, `.gitignore` | Target dependency edges match LLD §2.2 (no cycles) | `cmake --preset dev` configures | S |
+| C002 | T0.1 | `build(repo): add root CMake project and module layout` | Root `CMakeLists.txt`, `src/CMakeLists.txt` documenting the module graph, `elog_common` with its first file (`version.h/.cc`), `.gitignore`. Other modules get their `CMakeLists.txt` with their first source (CMake rejects empty library targets). | Module graph comment matches LLD §2.2 (no cycles) | `cmake -S . -B build && cmake --build build` | S |
 | C003 | T0.1 | `build(repo): add dev, release and tsan presets` | `CMakePresets.json`, warning and sanitizer flags | Flags per LLD §2.4 | All three presets configure | S |
 | C004 | T0.1 | `build(repo): pin third-party dependencies` | `cmake/Dependencies.cmake` (FetchContent, exact versions) | Every dependency pinned (LLD §2.3); `MSGPACK_NO_BOOST` set | Clean build downloads and compiles them | S |
 | C005 | T0.1 | `chore(repo): add clang-format configuration` | `.clang-format` | — | `clang-format --dry-run` works | S |

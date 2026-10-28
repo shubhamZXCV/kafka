@@ -1,0 +1,19 @@
+# Build output
+/build/
+compile_commands.json
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Experiment runs and local data directories
+/runs/
+/data*/
+*.db
+
+# Editors
+.vscode/
+.idea/
