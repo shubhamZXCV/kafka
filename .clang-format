@@ -19,6 +19,8 @@ IncludeBlocks: Regroup
 IncludeCategories:
   - Regex: '^<[a-z_]+\.h>$'       # C system headers
     Priority: 1
+  - Regex: '^<(sys|netinet|arpa)/[a-z_]+\.h>$'   # C system headers in subdirectories
+    Priority: 1
   - Regex: '^<[a-z_]+>$'          # C++ standard library
     Priority: 2
   - Regex: '^"elog/'              # project headers
