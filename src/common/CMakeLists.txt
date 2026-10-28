@@ -1,4 +1,5 @@
 add_library(elog_common STATIC
+    config.cc
     version.cc)
 
 target_include_directories(elog_common PUBLIC include)
