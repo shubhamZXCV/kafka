@@ -28,13 +28,17 @@ cmake --preset tsan && cmake --build --preset tsan      # ThreadSanitizer, befor
 
 pytest tests/functional -m "not slow"                   # default functional suite
 pytest tests/functional                                  # includes slow / repeated scenarios
-ELOG_BUILD_DIR=build/tsan pytest tests/functional        # run the suite against another build
+ELOG_BUILD_DIR=build/tsan setarch -R pytest tests/functional  # suite against the tsan build
 
 clang-format -i <files>                                  # style is in .clang-format
 clang-format --dry-run --Werror <files>                  # check only
 ```
 
 Build output goes to `build/<preset>/`; every executable lands in `build/<preset>/bin/`.
+
+**TSan on recent kernels:** TSan binaries abort with "unexpected memory mapping" when address
+randomisation is high. Run them under `setarch -R` (as above; child processes inherit it), or
+lower it until reboot with `sudo sysctl vm.mmap_rnd_bits=28`.
 
 ## Working on a Commit
 
