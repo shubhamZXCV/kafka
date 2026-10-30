@@ -1,4 +1,5 @@
 add_library(elog_storage STATIC
+    partition_log.cc
     segment.cc)
 
 target_include_directories(elog_storage PUBLIC include)
