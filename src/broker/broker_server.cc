@@ -22,7 +22,8 @@ BrokerServer::BrokerServer(BrokerConfig cfg)
     : cfg_(std::move(cfg)),
       replicas_(cfg_.dataDir, cfg_.maxPendingProduce, hwNotifier_),
       produceHandler_(replicas_, cfg_),
-      dispatcher_(produceHandler_),
+      fetchHandler_(replicas_, hwNotifier_, cfg_),
+      dispatcher_(produceHandler_, fetchHandler_),
       log_(logging::get("broker")) {}
 
 int BrokerServer::run() {

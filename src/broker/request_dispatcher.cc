@@ -19,12 +19,15 @@ Frame errorResponse(const Frame& request, ErrorCode error) {
 
 }  // namespace
 
-RequestDispatcher::RequestDispatcher(ProduceHandler& produce) : produce_(produce) {}
+RequestDispatcher::RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch)
+    : produce_(produce), fetch_(fetch) {}
 
 Frame RequestDispatcher::dispatch(const Frame& request) {
     switch (request.apiKey) {
         case ApiKey::Produce:
             return handleProduce(request);
+        case ApiKey::Fetch:
+            return handleFetch(request);
         default:
             break;
     }
@@ -43,6 +46,16 @@ Frame RequestDispatcher::handleProduce(const Frame& request) {
         return errorResponse(request, produce.error());
     }
     return encode(produce_.handle(produce.value()), request.correlationId);
+}
+
+Frame RequestDispatcher::handleFetch(const Frame& request) {
+    auto fetch = decodeFetchRequest(request);
+    if (!fetch.ok()) {
+        logging::get("broker")->warn("bad_request api=Fetch correlation={} error=\"{}\"",
+                                     request.correlationId, fetch.message());
+        return errorResponse(request, fetch.error());
+    }
+    return encode(fetch_.handle(fetch.value()), request.correlationId);
 }
 
 }  // namespace elog

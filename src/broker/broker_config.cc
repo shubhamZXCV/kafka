@@ -23,6 +23,8 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("max.pending.produce", 64, 1, kMaxPendingProduce),
         ConfigKey::integer("produce.admission.wait.ms", 5'000, 0, kOneDayMs),
         ConfigKey::integer("produce.throttle.hint.ms", 100, 1, 60'000),
+        ConfigKey::integer("fetch.max.bytes", 1'048'576, 1024, 1 << 30),
+        ConfigKey::integer("fetch.max.wait.ms", 500, 0, 60'000),
     };
 }
 
@@ -39,6 +41,8 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.maxPendingProduce = static_cast<std::ptrdiff_t>(config.getInt("max.pending.produce"));
     cfg.produceAdmissionWait = config.getMs("produce.admission.wait.ms");
     cfg.produceThrottleHint = config.getMs("produce.throttle.hint.ms");
+    cfg.fetchMaxBytes = static_cast<std::size_t>(config.getInt("fetch.max.bytes"));
+    cfg.fetchMaxWait = config.getMs("fetch.max.wait.ms");
     return cfg;
 }
 

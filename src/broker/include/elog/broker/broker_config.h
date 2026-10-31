@@ -28,6 +28,8 @@ struct BrokerConfig {
     std::ptrdiff_t maxPendingProduce = 0;         // admission slots per partition
     std::chrono::milliseconds produceAdmissionWait{0};
     std::chrono::milliseconds produceThrottleHint{0};  // throttleMs sent with THROTTLED (R-12)
+    std::size_t fetchMaxBytes = 0;                     // caps a fetch's maxBytes
+    std::chrono::milliseconds fetchMaxWait{0};         // caps a fetch's maxWaitMs
 
     // `config` must have been loaded with brokerConfigSchema().
     static BrokerConfig from(const Config& config);
