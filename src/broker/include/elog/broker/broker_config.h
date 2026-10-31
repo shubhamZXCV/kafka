@@ -25,6 +25,9 @@ struct BrokerConfig {
     int maxConnections = 0;
     std::chrono::milliseconds connectionIdle{0};  // receive timeout on client connections
     std::chrono::milliseconds requestTimeout{0};  // send timeout on client connections (R-10)
+    std::ptrdiff_t maxPendingProduce = 0;         // admission slots per partition
+    std::chrono::milliseconds produceAdmissionWait{0};
+    std::chrono::milliseconds produceThrottleHint{0};  // throttleMs sent with THROTTLED (R-12)
 
     // `config` must have been loaded with brokerConfigSchema().
     static BrokerConfig from(const Config& config);

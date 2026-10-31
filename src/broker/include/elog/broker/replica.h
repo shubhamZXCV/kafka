@@ -1,12 +1,17 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <semaphore>
 #include <set>
 #include <span>
+#include <utility>
 
 #include "elog/common/result.h"
 #include "elog/common/types.h"
@@ -19,29 +24,62 @@ enum class Role {
     LEADER,
 };
 
-// What only the leader tracks (LLD §6.1). Follower progress and minISR come with
-// replication.
+// What only the leader tracks (LLD §6.1). Follower progress comes with replication.
 struct LeaderState {
     std::set<BrokerId> isr;
+    std::uint16_t minIsr = 1;  // fewer ISR members than this and nothing commits (ADR-03)
 };
+
+// The largest max.pending.produce allowed (LLD §12.1).
+inline constexpr std::ptrdiff_t kMaxPendingProduce = 10'000;
 
 // One partition replica hosted by this broker: its log, role, leader epoch and high
 // watermark (LLD §6.1). This first version is leader-only: with one replica the ISR is just
 // this broker, so the high watermark follows the log end offset.
 //
 // Thread rules: mu_ guards role, epoch, leader state and every log mutation (LLD §11.1).
-// hw() is lock-free and safe from any thread.
+// hw() is lock-free and safe from any thread. pendingSlots_ needs no lock.
 class Replica {
 public:
-    Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log);
+    using Deadline = std::chrono::steady_clock::time_point;
+
+    // One produce admission slot, given back when this is destroyed, on every path
+    // (FR-BP-04).
+    class ProduceSlot {
+    public:
+        explicit ProduceSlot(Replica& replica) : replica_(&replica) {}
+        ProduceSlot(ProduceSlot&& other) noexcept
+            : replica_(std::exchange(other.replica_, nullptr)) {}
+        ProduceSlot(const ProduceSlot&) = delete;
+        ProduceSlot& operator=(const ProduceSlot&) = delete;
+        ProduceSlot& operator=(ProduceSlot&&) = delete;
+        ~ProduceSlot() {
+            if (replica_) {
+                replica_->pendingSlots_.release();
+            }
+        }
+
+    private:
+        Replica* replica_;
+    };
+
+    Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log, std::ptrdiff_t maxPendingProduce);
 
     // Called by the connection thread handling LeaderAndIsr (LLD §6.3, §11.3).
-    void becomeLeader(Epoch epoch, std::set<BrokerId> isr);
+    void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);
+
+    // Waits up to `wait` for one of max.pending.produce slots (LLD §6.5). While none is free
+    // the caller's connection thread blocks, so the producer feels TCP backpressure.
+    std::optional<ProduceSlot> tryAdmitProduce(std::chrono::milliseconds wait);
 
     // Appends one batch from a producer, stamping offsets and the leader epoch (LLD §6.5).
     // Fails with NOT_LEADER if this replica is not leader or the producer's epoch is older,
-    // and FENCED_LEADER_EPOCH if it is newer than ours.
+    // FENCED_LEADER_EPOCH if it is newer than ours, and NOT_ENOUGH_REPLICAS below minIsr.
     Result<AppendInfo> appendAsLeader(std::span<std::byte> batch, Epoch requestEpoch);
+
+    // Waits until lastOffset is committed (FR-PROD-03). NOT_LEADER if leadership moved on
+    // from `epoch` meanwhile, REQUEST_TIMED_OUT at the deadline.
+    Status awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch);
 
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }
@@ -53,6 +91,7 @@ private:
 
     const TopicPartition tp_;
     std::mutex mu_;
+    std::condition_variable hwCv_;  // signalled on HW and role changes; waits hold mu_
     Role role_ = Role::FOLLOWER;
     Epoch leaderEpoch_ = 0;
     std::unique_ptr<PartitionLog> log_;
@@ -60,6 +99,7 @@ private:
     // load with acquire.
     std::atomic<Offset> hw_{0};
     std::optional<LeaderState> leader_;  // set while role_ is LEADER
+    std::counting_semaphore<kMaxPendingProduce> pendingSlots_;
 };
 
 }  // namespace elog

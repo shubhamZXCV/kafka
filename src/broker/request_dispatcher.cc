@@ -2,6 +2,7 @@
 
 #include "elog/common/logging.h"
 #include "elog/protocol/json_codec.h"
+#include "elog/protocol/messages.h"
 #include "elog/protocol/msgpack_codec.h"
 
 namespace elog {
@@ -18,11 +19,30 @@ Frame errorResponse(const Frame& request, ErrorCode error) {
 
 }  // namespace
 
+RequestDispatcher::RequestDispatcher(ProduceHandler& produce) : produce_(produce) {}
+
 Frame RequestDispatcher::dispatch(const Frame& request) {
-    // No handlers yet: every API key is unhandled for now.
+    switch (request.apiKey) {
+        case ApiKey::Produce:
+            return handleProduce(request);
+        default:
+            break;
+    }
     logging::get("broker")->warn("unhandled_request api={} correlation={}",
                                  apiKeyName(request.apiKey), request.correlationId);
     return errorResponse(request, ErrorCode::INVALID_REQUEST);
+}
+
+// Parse → act → reply. A body that does not decode gets INVALID_REQUEST; the frame itself
+// was valid, so the connection stays open (R-10).
+Frame RequestDispatcher::handleProduce(const Frame& request) {
+    auto produce = decodeProduceRequest(request);
+    if (!produce.ok()) {
+        logging::get("broker")->warn("bad_request api=Produce correlation={} error=\"{}\"",
+                                     request.correlationId, produce.message());
+        return errorResponse(request, produce.error());
+    }
+    return encode(produce_.handle(produce.value()), request.correlationId);
 }
 
 }  // namespace elog

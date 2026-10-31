@@ -1,5 +1,7 @@
 #include "elog/broker/broker_config.h"
 
+#include "elog/broker/replica.h"
+
 namespace elog {
 
 namespace {
@@ -18,6 +20,9 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
         ConfigKey::integer("request.timeout.ms", 30'000, 1, kOneDayMs),
+        ConfigKey::integer("max.pending.produce", 64, 1, kMaxPendingProduce),
+        ConfigKey::integer("produce.admission.wait.ms", 5'000, 0, kOneDayMs),
+        ConfigKey::integer("produce.throttle.hint.ms", 100, 1, 60'000),
     };
 }
 
@@ -31,6 +36,9 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");
     cfg.requestTimeout = config.getMs("request.timeout.ms");
+    cfg.maxPendingProduce = static_cast<std::ptrdiff_t>(config.getInt("max.pending.produce"));
+    cfg.produceAdmissionWait = config.getMs("produce.admission.wait.ms");
+    cfg.produceThrottleHint = config.getMs("produce.throttle.hint.ms");
     return cfg;
 }
 

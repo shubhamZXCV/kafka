@@ -1,6 +1,7 @@
 add_library(elog_broker_lib STATIC
     broker_config.cc
     broker_server.cc
+    produce_handler.cc
     replica.cc
     replica_manager.cc
     request_dispatcher.cc)

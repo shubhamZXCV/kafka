@@ -7,6 +7,7 @@
 #include <spdlog/logger.h>
 
 #include "elog/broker/broker_config.h"
+#include "elog/broker/produce_handler.h"
 #include "elog/broker/replica_manager.h"
 #include "elog/broker/request_dispatcher.h"
 #include "elog/common/socket.h"
@@ -34,6 +35,7 @@ private:
 
     const BrokerConfig cfg_;
     ReplicaManager replicas_;
+    ProduceHandler produceHandler_;
     RequestDispatcher dispatcher_;
     std::shared_ptr<spdlog::logger> log_;
     std::atomic<int> activeConnections_{0};

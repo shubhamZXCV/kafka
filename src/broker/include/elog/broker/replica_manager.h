@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -21,7 +22,7 @@ namespace elog {
 // only getOrCreate takes it.
 class ReplicaManager {
 public:
-    explicit ReplicaManager(std::string dataDir);
+    ReplicaManager(std::string dataDir, std::ptrdiff_t maxPendingProduce);
 
     // The replica for tp, or nullptr if this broker does not host it.
     std::shared_ptr<Replica> get(const TopicPartition& tp) const;
@@ -34,6 +35,7 @@ public:
 
 private:
     const std::string dataDir_;
+    const std::ptrdiff_t maxPendingProduce_;  // admission slots per new replica
     std::mutex createMu_;
     mutable std::shared_mutex mapMu_;
     std::map<TopicPartition, std::shared_ptr<Replica>> replicas_;
