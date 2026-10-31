@@ -12,7 +12,9 @@
 #include <set>
 #include <span>
 #include <utility>
+#include <vector>
 
+#include "elog/broker/hw_notifier.h"
 #include "elog/common/result.h"
 #include "elog/common/types.h"
 #include "elog/storage/partition_log.h"
@@ -28,6 +30,14 @@ enum class Role {
 struct LeaderState {
     std::set<BrokerId> isr;
     std::uint16_t minIsr = 1;  // fewer ISR members than this and nothing commits (ADR-03)
+};
+
+// Committed records for a consumer, at most the credit it asked for (LLD §6.6).
+struct FetchData {
+    Offset highWatermark = 0;
+    Offset logStartOffset = 0;
+    std::vector<std::byte> records;  // whole or sliced batches, back to back
+    std::uint32_t recordCount = 0;
 };
 
 // The largest max.pending.produce allowed (LLD §12.1).
@@ -63,7 +73,8 @@ public:
         Replica* replica_;
     };
 
-    Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log, std::ptrdiff_t maxPendingProduce);
+    Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log, std::ptrdiff_t maxPendingProduce,
+            HwNotifier& hwNotifier);
 
     // Called by the connection thread handling LeaderAndIsr (LLD §6.3, §11.3).
     void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);
@@ -81,13 +92,20 @@ public:
     // from `epoch` meanwhile, REQUEST_TIMED_OUT at the deadline.
     Status awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch);
 
+    // Records from `from` up to the high watermark, at most `credit` records and about
+    // maxBytes (LLD §6.6). Same leader and epoch checks as appendAsLeader; OFFSET_OUT_OF_RANGE
+    // outside [logStartOffset, HW].
+    Result<FetchData> readForConsumer(Offset from, std::uint32_t credit, std::size_t maxBytes,
+                                      Epoch requestEpoch);
+
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }
 
     const TopicPartition& topicPartition() const { return tp_; }
 
 private:
-    void maybeAdvanceHw();  // requires mu_
+    Status checkLeaderEpoch(Epoch requestEpoch) const;  // requires mu_
+    void maybeAdvanceHw();                              // requires mu_
 
     const TopicPartition tp_;
     std::mutex mu_;
@@ -100,6 +118,7 @@ private:
     std::atomic<Offset> hw_{0};
     std::optional<LeaderState> leader_;  // set while role_ is LEADER
     std::counting_semaphore<kMaxPendingProduce> pendingSlots_;
+    HwNotifier& hwNotifier_;
 };
 
 }  // namespace elog

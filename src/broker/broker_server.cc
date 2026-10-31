@@ -20,7 +20,7 @@ constexpr auto kAcceptRetryDelay = std::chrono::milliseconds(100);
 
 BrokerServer::BrokerServer(BrokerConfig cfg)
     : cfg_(std::move(cfg)),
-      replicas_(cfg_.dataDir, cfg_.maxPendingProduce),
+      replicas_(cfg_.dataDir, cfg_.maxPendingProduce, hwNotifier_),
       produceHandler_(replicas_, cfg_),
       dispatcher_(produceHandler_),
       log_(logging::get("broker")) {}

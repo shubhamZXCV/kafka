@@ -8,8 +8,11 @@
 
 namespace elog {
 
-ReplicaManager::ReplicaManager(std::string dataDir, std::ptrdiff_t maxPendingProduce)
-    : dataDir_(std::move(dataDir)), maxPendingProduce_(maxPendingProduce) {}
+ReplicaManager::ReplicaManager(std::string dataDir, std::ptrdiff_t maxPendingProduce,
+                               HwNotifier& hwNotifier)
+    : dataDir_(std::move(dataDir)),
+      maxPendingProduce_(maxPendingProduce),
+      hwNotifier_(hwNotifier) {}
 
 std::shared_ptr<Replica> ReplicaManager::get(const TopicPartition& tp) const {
     std::shared_lock lock(mapMu_);  // lock order: ReplicaManager::mapMu_ (LLD §11.2)
@@ -34,7 +37,8 @@ Result<std::shared_ptr<Replica>> ReplicaManager::getOrCreate(const TopicPartitio
                                       tp.topic, tp.partition, log.message());
         return {log.error(), log.message()};
     }
-    auto replica = std::make_shared<Replica>(tp, std::move(log).value(), maxPendingProduce_);
+    auto replica =
+        std::make_shared<Replica>(tp, std::move(log).value(), maxPendingProduce_, hwNotifier_);
     {
         std::unique_lock mapLock(mapMu_);  // lock order: createMu_ → mapMu_ (LLD §11.2)
         replicas_.emplace(tp, replica);
