@@ -327,4 +327,15 @@ Result<FetchResponse> decodeFetchResponse(const Frame& frame) {
     });
 }
 
+// --- Error-only response -----------------------------------------------------------------
+
+Frame encodeMsgPackErrorResponse(ApiKey apiKey, std::uint32_t correlationId, ErrorCode error) {
+    std::vector<std::byte> body;
+    ByteSink sink{body};
+    Packer packer(sink);
+    packer.pack_map(1);
+    packErrorField(packer, error);
+    return makeFrame(apiKey, correlationId, true, std::move(body));
+}
+
 }  // namespace elog

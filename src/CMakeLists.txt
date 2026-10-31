@@ -13,3 +13,4 @@
 add_subdirectory(common)
 add_subdirectory(protocol)
 add_subdirectory(storage)
+add_subdirectory(broker)

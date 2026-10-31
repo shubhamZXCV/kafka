@@ -26,4 +26,7 @@ Frame encode(const FetchResponse& response, std::uint32_t correlationId);
 Result<FetchRequest> decodeFetchRequest(const Frame& frame);
 Result<FetchResponse> decodeFetchResponse(const Frame& frame);
 
+// A response whose body holds only `error`, for requests a server cannot handle (LLD R-10).
+Frame encodeMsgPackErrorResponse(ApiKey apiKey, std::uint32_t correlationId, ErrorCode error);
+
 }  // namespace elog

@@ -349,4 +349,10 @@ Result<LeaderAndIsrResponse> decodeLeaderAndIsrResponse(const Frame& frame) {
     });
 }
 
+// --- Error-only response -----------------------------------------------------------------
+
+Frame encodeJsonErrorResponse(ApiKey apiKey, std::uint32_t correlationId, ErrorCode error) {
+    return makeFrame(apiKey, correlationId, true, {{"error", errorJson(error)}});
+}
+
 }  // namespace elog
