@@ -3,6 +3,7 @@ add_library(elog_protocol STATIC
     error_codes.cc
     frame.cc
     json_codec.cc
+    msgpack_codec.cc
     record_batch.cc)
 
 target_include_directories(elog_protocol PUBLIC include)

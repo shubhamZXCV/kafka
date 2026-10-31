@@ -9,7 +9,7 @@
 #include "elog/common/types.h"
 
 // One struct per request and response body (LLD §4.6). Field names match the wire names.
-// Codecs live in json_codec.h.
+// Codecs live in json_codec.h (control plane) and msgpack_codec.h (Produce, Fetch).
 namespace elog {
 
 // Decoders reject arrays longer than this with INVALID_REQUEST (LLD §4.7).
@@ -108,6 +108,63 @@ struct PartitionError {
 struct LeaderAndIsrResponse {
     ErrorCode error = ErrorCode::NONE;
     std::vector<PartitionError> partitions;
+};
+
+// --- Produce (10), MessagePack ------------------------------------------------------------
+
+struct ProducePartition {
+    std::string topic;
+    std::uint32_t partition = 0;
+    Epoch leaderEpoch = 0;
+    std::vector<std::byte> records;  // one RecordBatch; opaque to the codec
+};
+
+struct ProduceRequest {
+    std::uint32_t timeoutMs = 0;  // how long to wait for the records to commit
+    std::vector<ProducePartition> partitions;
+};
+
+struct ProducePartitionResponse {
+    std::string topic;
+    std::uint32_t partition = 0;
+    ErrorCode error = ErrorCode::NONE;
+    Offset baseOffset = 0;         // offset given to the batch's first record
+    std::uint32_t throttleMs = 0;  // optional on the wire: sent only when non-zero (THROTTLED)
+};
+
+struct ProduceResponse {
+    ErrorCode error = ErrorCode::NONE;
+    std::vector<ProducePartitionResponse> partitions;
+};
+
+// --- Fetch (11), MessagePack --------------------------------------------------------------
+
+struct FetchPartition {
+    std::string topic;
+    std::uint32_t partition = 0;
+    Offset fetchOffset = 0;
+    Epoch currentLeaderEpoch = 0;
+};
+
+struct FetchRequest {
+    std::uint32_t maxWaitMs = 0;  // long-poll limit when no data is available
+    std::uint32_t maxBytes = 0;
+    std::uint32_t credit = 0;  // at most this many records in the whole response (FR-FETCH-04)
+    std::vector<FetchPartition> partitions;
+};
+
+struct FetchPartitionResponse {
+    std::string topic;
+    std::uint32_t partition = 0;
+    ErrorCode error = ErrorCode::NONE;
+    Offset highWatermark = 0;
+    Offset logStartOffset = 0;
+    std::vector<std::byte> records;  // 0..n RecordBatches, back to back; opaque to the codec
+};
+
+struct FetchResponse {
+    ErrorCode error = ErrorCode::NONE;
+    std::vector<FetchPartitionResponse> partitions;
 };
 
 }  // namespace elog
