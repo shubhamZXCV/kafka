@@ -45,6 +45,16 @@ json toJson(const PartitionMetadata& p) {
             {"isr", p.isr}};
 }
 
+json toJson(const PartitionState& p) {
+    return {{"topic", p.topic},   {"partition", p.partition},
+            {"leader", p.leader}, {"leaderEpoch", p.leaderEpoch},
+            {"isr", p.isr},       {"replicas", p.replicas}};
+}
+
+json toJson(const PartitionError& p) {
+    return {{"topic", p.topic}, {"partition", p.partition}, {"error", errorJson(p.error)}};
+}
+
 json toJson(const TopicMetadata& t) {
     json partitions = json::array();
     for (const auto& p : t.partitions) {
@@ -243,6 +253,99 @@ Result<CreateTopicRequest> decodeCreateTopicRequest(const Frame& frame) {
 Result<CreateTopicResponse> decodeCreateTopicResponse(const Frame& frame) {
     return decodeBody<CreateTopicResponse>(frame, ApiKey::CreateTopic, [](const json& j) {
         return CreateTopicResponse{errorField(j)};
+    });
+}
+
+// --- RegisterBroker (3) -------------------------------------------------------------------
+
+Frame encode(const RegisterBrokerRequest& request, std::uint32_t correlationId) {
+    const json body = {
+        {"brokerId", request.brokerId}, {"host", request.host}, {"port", request.port}};
+    return makeFrame(ApiKey::RegisterBroker, correlationId, false, body);
+}
+
+Frame encode(const RegisterBrokerResponse& response, std::uint32_t correlationId) {
+    const json body = {{"error", errorJson(response.error)}, {"incarnation", response.incarnation}};
+    return makeFrame(ApiKey::RegisterBroker, correlationId, true, body);
+}
+
+Result<RegisterBrokerRequest> decodeRegisterBrokerRequest(const Frame& frame) {
+    return decodeBody<RegisterBrokerRequest>(frame, ApiKey::RegisterBroker, [](const json& j) {
+        return RegisterBrokerRequest{intField<BrokerId>(j, "brokerId"), stringField(j, "host"),
+                                     intField<std::uint16_t>(j, "port")};
+    });
+}
+
+Result<RegisterBrokerResponse> decodeRegisterBrokerResponse(const Frame& frame) {
+    return decodeBody<RegisterBrokerResponse>(frame, ApiKey::RegisterBroker, [](const json& j) {
+        return RegisterBrokerResponse{errorField(j), intField<std::uint32_t>(j, "incarnation")};
+    });
+}
+
+// --- BrokerHeartbeat (4) ------------------------------------------------------------------
+
+Frame encode(const BrokerHeartbeatRequest& request, std::uint32_t correlationId) {
+    const json body = {{"brokerId", request.brokerId}, {"incarnation", request.incarnation}};
+    return makeFrame(ApiKey::BrokerHeartbeat, correlationId, false, body);
+}
+
+Frame encode(const BrokerHeartbeatResponse& response, std::uint32_t correlationId) {
+    return makeFrame(ApiKey::BrokerHeartbeat, correlationId, true,
+                     {{"error", errorJson(response.error)}});
+}
+
+Result<BrokerHeartbeatRequest> decodeBrokerHeartbeatRequest(const Frame& frame) {
+    return decodeBody<BrokerHeartbeatRequest>(frame, ApiKey::BrokerHeartbeat, [](const json& j) {
+        return BrokerHeartbeatRequest{intField<BrokerId>(j, "brokerId"),
+                                      intField<std::uint32_t>(j, "incarnation")};
+    });
+}
+
+Result<BrokerHeartbeatResponse> decodeBrokerHeartbeatResponse(const Frame& frame) {
+    return decodeBody<BrokerHeartbeatResponse>(frame, ApiKey::BrokerHeartbeat, [](const json& j) {
+        return BrokerHeartbeatResponse{errorField(j)};
+    });
+}
+
+// --- LeaderAndIsr (6) ---------------------------------------------------------------------
+
+Frame encode(const LeaderAndIsrRequest& request, std::uint32_t correlationId) {
+    const json body = {{"controllerIncarnation", request.controllerIncarnation},
+                       {"partitions", toJsonArray(request.partitions)},
+                       {"brokers", toJsonArray(request.brokers)}};
+    return makeFrame(ApiKey::LeaderAndIsr, correlationId, false, body);
+}
+
+Frame encode(const LeaderAndIsrResponse& response, std::uint32_t correlationId) {
+    const json body = {{"error", errorJson(response.error)},
+                       {"partitions", toJsonArray(response.partitions)}};
+    return makeFrame(ApiKey::LeaderAndIsr, correlationId, true, body);
+}
+
+Result<LeaderAndIsrRequest> decodeLeaderAndIsrRequest(const Frame& frame) {
+    return decodeBody<LeaderAndIsrRequest>(frame, ApiKey::LeaderAndIsr, [](const json& j) {
+        LeaderAndIsrRequest request;
+        request.controllerIncarnation = intField<std::uint32_t>(j, "controllerIncarnation");
+        for (const json& p : arrayField(j, "partitions")) {
+            request.partitions.push_back(
+                {stringField(p, "topic"), intField<std::uint32_t>(p, "partition"),
+                 intField<BrokerId>(p, "leader"), intField<Epoch>(p, "leaderEpoch"),
+                 brokerIdsField(p, "isr"), brokerIdsField(p, "replicas")});
+        }
+        request.brokers = brokersField(j);
+        return request;
+    });
+}
+
+Result<LeaderAndIsrResponse> decodeLeaderAndIsrResponse(const Frame& frame) {
+    return decodeBody<LeaderAndIsrResponse>(frame, ApiKey::LeaderAndIsr, [](const json& j) {
+        LeaderAndIsrResponse response;
+        response.error = errorField(j);
+        for (const json& p : arrayField(j, "partitions")) {
+            response.partitions.push_back(
+                {stringField(p, "topic"), intField<std::uint32_t>(p, "partition"), errorField(p)});
+        }
+        return response;
     });
 }
 

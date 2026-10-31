@@ -60,4 +60,54 @@ struct CreateTopicResponse {
     ErrorCode error = ErrorCode::NONE;
 };
 
+// --- RegisterBroker (3) / BrokerHeartbeat (4) ---------------------------------------------
+
+struct RegisterBrokerRequest {
+    BrokerId brokerId = 0;
+    std::string host;
+    std::uint16_t port = 0;
+};
+
+struct RegisterBrokerResponse {
+    ErrorCode error = ErrorCode::NONE;
+    std::uint32_t incarnation = 0;  // bumped on every registration (LLD §7.5)
+};
+
+struct BrokerHeartbeatRequest {
+    BrokerId brokerId = 0;
+    std::uint32_t incarnation = 0;
+};
+
+struct BrokerHeartbeatResponse {
+    ErrorCode error = ErrorCode::NONE;
+};
+
+// --- LeaderAndIsr (6) ---------------------------------------------------------------------
+
+struct PartitionState {
+    std::string topic;
+    std::uint32_t partition = 0;
+    BrokerId leader = 0;
+    Epoch leaderEpoch = 0;
+    std::vector<BrokerId> isr;
+    std::vector<BrokerId> replicas;
+};
+
+struct LeaderAndIsrRequest {
+    std::uint32_t controllerIncarnation = 0;
+    std::vector<PartitionState> partitions;
+    std::vector<BrokerAddress> brokers;  // addresses of the leaders named above
+};
+
+struct PartitionError {
+    std::string topic;
+    std::uint32_t partition = 0;
+    ErrorCode error = ErrorCode::NONE;
+};
+
+struct LeaderAndIsrResponse {
+    ErrorCode error = ErrorCode::NONE;
+    std::vector<PartitionError> partitions;
+};
+
 }  // namespace elog

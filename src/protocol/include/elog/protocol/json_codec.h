@@ -25,4 +25,19 @@ Frame encode(const CreateTopicResponse& response, std::uint32_t correlationId);
 Result<CreateTopicRequest> decodeCreateTopicRequest(const Frame& frame);
 Result<CreateTopicResponse> decodeCreateTopicResponse(const Frame& frame);
 
+Frame encode(const RegisterBrokerRequest& request, std::uint32_t correlationId);
+Frame encode(const RegisterBrokerResponse& response, std::uint32_t correlationId);
+Result<RegisterBrokerRequest> decodeRegisterBrokerRequest(const Frame& frame);
+Result<RegisterBrokerResponse> decodeRegisterBrokerResponse(const Frame& frame);
+
+Frame encode(const BrokerHeartbeatRequest& request, std::uint32_t correlationId);
+Frame encode(const BrokerHeartbeatResponse& response, std::uint32_t correlationId);
+Result<BrokerHeartbeatRequest> decodeBrokerHeartbeatRequest(const Frame& frame);
+Result<BrokerHeartbeatResponse> decodeBrokerHeartbeatResponse(const Frame& frame);
+
+Frame encode(const LeaderAndIsrRequest& request, std::uint32_t correlationId);
+Frame encode(const LeaderAndIsrResponse& response, std::uint32_t correlationId);
+Result<LeaderAndIsrRequest> decodeLeaderAndIsrRequest(const Frame& frame);
+Result<LeaderAndIsrResponse> decodeLeaderAndIsrResponse(const Frame& frame);
+
 }  // namespace elog
