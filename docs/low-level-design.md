@@ -6,9 +6,9 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.2 |
+| Version | 1.3 |
 | Status | Draft for review |
-| Date | 2026-10-29 |
+| Date | 2026-10-31 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
 
 ### Revision History
@@ -18,6 +18,7 @@
 | 1.0 | 2026-10-28 | Initial draft |
 | 1.1 | 2026-10-28 | Functional tests only (SRS v1.1): §15 rewritten as a functional test catalogue; GoogleTest/RapidCheck removed (§2); `Clock` interface replaced by time helpers (§3.2); `ELOG_TEST_HOOKS` and `OrderedMutex` removed (§14, §11.2); `elogctl describe-*`/`log-verify` and a read-only `DescribeGroup` request added for observability (§15.2). |
 | 1.2 | 2026-10-29 | R-9: `ErrorCode` moves to `common` and gains the local-only `NETWORK_ERROR` (§2.1, §3.1, §4.4). |
+| 1.3 | 2026-10-31 | R-10: broker `request.timeout.ms` (§12.1); reply to API keys a server does not handle (§6.2). |
 
 ---
 
@@ -948,6 +949,8 @@ def serveConnection(sock):
         resp ← dispatcher.dispatch(frame)                # may block (produce/fetch/long-poll)
         writeFrame(sock, resp)
 ```
+
+A well-formed frame whose API key this server does not handle gets a response with the same `apiKey` and `correlationId` whose body holds only `error = INVALID_REQUEST`, in the request's encoding. The connection stays open, since the frame itself was valid (R-10).
 
 Shutdown: set `running=false`, `listener.close()`, `shutdown()` every registered socket, join all threads, flush logs, write checkpoints.
 
@@ -2038,6 +2041,7 @@ Precedence: built-in default < `--config <file>` (key=value) < `--set key=value`
 | `max.frame.bytes` | 8 388 608 | | |
 | `max.connections` | 256 | | |
 | `connection.idle.ms` | 300 000 | | |
+| `request.timeout.ms` | 30 000 | | Send timeout on client connections (§6.2, R-10) |
 | `broker.heartbeat.interval.ms` | 2 000 | | |
 | `hw.checkpoint.interval.ms` | 5 000 | | |
 | `recovery.checkpoint.interval.ms` | 5 000 | | |
@@ -2295,7 +2299,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout, so the HLD is unchanged. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 only fills in details, so the HLD is unchanged for both. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2308,6 +2312,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-7 | §9.2 | HW = min LEO over ISR | HW uses the **union of current and pending ISR** while an `AlterIsr` is in flight | Safety of shrink ordering (HLD §9.9) |
 | R-8 | §12.2 catalogue | No group inspection API | Added read-only **`DescribeGroup` (25)** | Functional tests and `elogctl describe-group` need to observe ownership and epochs |
 | R-9 | §12.3 errors | Error codes belong to the protocol | **`ErrorCode` is defined in `common`**, plus local-only `NETWORK_ERROR = −1`. Frame codec sits in `protocol`. | `Result` (common) holds an `ErrorCode`, and `common` may not depend on `protocol`. Socket failures need a code. |
+| R-10 | §12.2 / §16 config | Not specified | Broker gains **`request.timeout.ms`** (30 000), the send timeout used in §6.2. A frame with an API key the server does not handle gets an **error-only `INVALID_REQUEST` response**; the connection stays open. | §6.2 pseudocode used `cfg.requestTimeoutMs`, which §12.1 lacked. A valid frame is not a protocol violation, so closing the connection (NFR-SEC-02) is reserved for malformed frames. |
 
 ---
 
