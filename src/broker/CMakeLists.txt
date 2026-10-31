@@ -1,6 +1,8 @@
 add_library(elog_broker_lib STATIC
     broker_config.cc
     broker_server.cc
+    replica.cc
+    replica_manager.cc
     request_dispatcher.cc)
 
 target_include_directories(elog_broker_lib PUBLIC include)

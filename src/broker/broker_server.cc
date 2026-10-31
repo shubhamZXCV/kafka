@@ -18,7 +18,8 @@ constexpr auto kAcceptRetryDelay = std::chrono::milliseconds(100);
 
 }  // namespace
 
-BrokerServer::BrokerServer(BrokerConfig cfg) : cfg_(std::move(cfg)), log_(logging::get("broker")) {}
+BrokerServer::BrokerServer(BrokerConfig cfg)
+    : cfg_(std::move(cfg)), replicas_(cfg_.dataDir), log_(logging::get("broker")) {}
 
 int BrokerServer::run() {
     auto listener = Listener::bind(cfg_.listenHost, cfg_.listenPort);

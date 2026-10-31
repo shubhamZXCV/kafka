@@ -20,6 +20,7 @@ struct BrokerConfig {
     BrokerId brokerId = 0;
     std::string listenHost;
     std::uint16_t listenPort = 0;
+    std::string dataDir;  // one subdirectory per partition replica
     std::size_t maxFrameBytes = 0;
     int maxConnections = 0;
     std::chrono::milliseconds connectionIdle{0};  // receive timeout on client connections

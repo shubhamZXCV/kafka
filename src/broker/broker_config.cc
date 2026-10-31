@@ -13,6 +13,7 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::requiredInteger("broker.id", 0, INT32_MAX),
         ConfigKey::string("listen.host", "0.0.0.0"),
         ConfigKey::integer("listen.port", 9101, 1, 65535),
+        ConfigKey::string("data.dir", "./data"),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -25,6 +26,7 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.brokerId = static_cast<BrokerId>(config.getInt("broker.id"));
     cfg.listenHost = config.getString("listen.host");
     cfg.listenPort = static_cast<std::uint16_t>(config.getInt("listen.port"));
+    cfg.dataDir = config.getString("data.dir");
     cfg.maxFrameBytes = static_cast<std::size_t>(config.getInt("max.frame.bytes"));
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");
