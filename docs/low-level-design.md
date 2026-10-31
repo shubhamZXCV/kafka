@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.4 |
+| Version | 1.5 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -20,6 +20,7 @@
 | 1.2 | 2026-10-29 | R-9: `ErrorCode` moves to `common` and gains the local-only `NETWORK_ERROR` (§2.1, §3.1, §4.4). |
 | 1.3 | 2026-10-31 | R-10: broker `request.timeout.ms` (§12.1); reply to API keys a server does not handle (§6.2). |
 | 1.4 | 2026-11-01 | R-11: `ReplicaManager::createMu_` serialises log creation, so `mapMu_` is never held across a log open (§6.1, §6.3, §11.1, §11.2). |
+| 1.5 | 2026-11-01 | R-12: `LeaderAndIsr` carries `minIsr` (§4.6, §6.1, §6.3); broker `produce.throttle.hint.ms` (§6.5, §12.1). |
 
 ---
 
@@ -468,7 +469,7 @@ Control-plane messages are JSON objects. Data-plane messages are MessagePack map
 ```jsonc
 { "controllerIncarnation": 4,
   "partitions": [ { "topic": "orders", "partition": 0, "leader": 2, "leaderEpoch": 8,
-                    "isr": [2, 3], "replicas": [1, 2, 3] } ],
+                    "isr": [2, 3], "replicas": [1, 2, 3], "minIsr": 2 } ],
   "brokers": [ { "id": 2, "host": "broker-2", "port": 9102 } ] }
 → { "error": 0, "partitions": [ { "topic": "orders", "partition": 0, "error": 0 } ] }
 ```
@@ -879,7 +880,7 @@ classDiagram
         +readForConsumer(from, credit, maxBytes, reqEpoch) Result~FetchData~
         +readForFollower(fid, from, maxBytes, reqEpoch) Result~ReplicaFetchData~
         +appendAsFollower(batches, leaderHw) Status
-        +becomeLeader(epoch, isr) Status
+        +becomeLeader(epoch, isr, minIsr) Status
         +becomeFollower(epoch, leaderId) Status
         +maybeShrinkIsr(now) optional~IsrProposal~
         +onIsrCommitted(epoch, isr)
@@ -965,15 +966,15 @@ def applyLeaderAndIsr(req):
         with r.mu_:
             if p.leaderEpoch < r.leaderEpoch_: result FENCED_LEADER_EPOCH; continue
             if p.leaderEpoch == r.leaderEpoch_ and r.role_ matches: continue     # idempotent
-            if p.leader == self.id: r.becomeLeader(p.leaderEpoch, p.isr)
+            if p.leader == self.id: r.becomeLeader(p.leaderEpoch, p.isr, p.minIsr)
             else:                   r.becomeFollower(p.leaderEpoch, p.leader)
     fetchers_.reconcile(followed partitions grouped by leader)
     hwNotifier_.bump()                                    # wakes waiters to re-check role
 
-def becomeLeader(epoch, isr):                             # holds mu_
+def becomeLeader(epoch, isr, minIsr):                     # holds mu_
     leaderEpoch_ ← epoch; role_ ← LEADER
     log_.epochCache().assign(epoch, log_.leo())
-    leader_ ← LeaderState(isr=isr, followers={f: FollowerProgress(leo=0, lastCaughtUpMs=now)
+    leader_ ← LeaderState(isr=isr, minIsr=minIsr, followers={f: FollowerProgress(leo=0, lastCaughtUpMs=now)
                                                for f in replicas if f ≠ self})
     hwCv_.notify_all()                                    # fail parked produces from old role
 
@@ -1015,7 +1016,7 @@ def handleProduce(req):
         r ← replicas_.get(p.tp) or UNKNOWN_TOPIC_OR_PARTITION
         # 1. bounded admission (FR-BP-04): blocks this connection thread → TCP backpressure
         if not r.pendingSlots_.try_acquire_for(cfg.produceAdmissionWaitMs):   # default 5 000
-            resp += THROTTLED(throttleMs=cfg.throttleHintMs); continue
+            resp += THROTTLED(throttleMs=cfg.produceThrottleHintMs); continue   # R-12
         guard ← release slot on scope exit
         with r.mu_:
             if r.role_ != LEADER:                  resp += NOT_LEADER(leaderId_); continue
@@ -2047,6 +2048,7 @@ Precedence: built-in default < `--config <file>` (key=value) < `--set key=value`
 | `replica.fetch.wait.ms` | 500 | | |
 | `max.pending.produce` | 64 | 1 – 10 000 | Per partition (FR-BP-04) |
 | `produce.admission.wait.ms` | 5 000 | | Then `THROTTLED` |
+| `produce.throttle.hint.ms` | 100 | 1 – 60 000 | `throttleMs` sent with `THROTTLED` (§6.5, R-12) |
 | `fetch.max.bytes` | 1 048 576 | | |
 | `fetch.max.wait.ms` | 500 | | |
 | `max.frame.bytes` | 8 388 608 | | |
@@ -2310,7 +2312,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 and R-11 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-12 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2325,6 +2327,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-9 | §12.3 errors | Error codes belong to the protocol | **`ErrorCode` is defined in `common`**, plus local-only `NETWORK_ERROR = −1`. Frame codec sits in `protocol`. | `Result` (common) holds an `ErrorCode`, and `common` may not depend on `protocol`. Socket failures need a code. |
 | R-10 | §12.2 / §16 config | Not specified | Broker gains **`request.timeout.ms`** (30 000), the send timeout used in §6.2. A frame with an API key the server does not handle gets an **error-only `INVALID_REQUEST` response**; the connection stays open. | §6.2 pseudocode used `cfg.requestTimeoutMs`, which §12.1 lacked. A valid frame is not a protocol violation, so closing the connection (NFR-SEC-02) is reserved for malformed frames. |
 | R-11 | §11 locking | Not specified | `ReplicaManager` gains **`createMu_`**, held by `getOrCreate` while it opens a new partition's log; `mapMu_` is taken only to look up or insert. Lock order: `createMu_ → mapMu_ → Replica::mu_`. | Opening a log does disk I/O (and recovery, §5.6), and two concurrent opens of one directory collide. Holding `mapMu_` would stall every produce and fetch lookup during it. |
+| R-12 | §12.2 / §16 config | Not specified | `LeaderAndIsr` partition state gains **`minIsr`** (from `CreateTopic`), stored in `LeaderState` by `becomeLeader`. Broker gains **`produce.throttle.hint.ms`** (100), the `throttleMs` returned with `THROTTLED`. | §6.5 checks `leader_.minIsr`, but only the coordinator knew it. §6.5 used `cfg.throttleHintMs`, which §12.1 lacked. |
 
 ---
 
