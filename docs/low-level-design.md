@@ -6,9 +6,9 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.3 |
+| Version | 1.4 |
 | Status | Draft for review |
-| Date | 2026-10-31 |
+| Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
 
 ### Revision History
@@ -19,6 +19,7 @@
 | 1.1 | 2026-10-28 | Functional tests only (SRS v1.1): §15 rewritten as a functional test catalogue; GoogleTest/RapidCheck removed (§2); `Clock` interface replaced by time helpers (§3.2); `ELOG_TEST_HOOKS` and `OrderedMutex` removed (§14, §11.2); `elogctl describe-*`/`log-verify` and a read-only `DescribeGroup` request added for observability (§15.2). |
 | 1.2 | 2026-10-29 | R-9: `ErrorCode` moves to `common` and gains the local-only `NETWORK_ERROR` (§2.1, §3.1, §4.4). |
 | 1.3 | 2026-10-31 | R-10: broker `request.timeout.ms` (§12.1); reply to API keys a server does not handle (§6.2). |
+| 1.4 | 2026-11-01 | R-11: `ReplicaManager::createMu_` serialises log creation, so `mapMu_` is never held across a log open (§6.1, §6.3, §11.1, §11.2). |
 
 ---
 
@@ -856,6 +857,7 @@ classDiagram
         +dispatch(Frame) Frame
     }
     class ReplicaManager {
+        -mutex createMu_
         -shared_mutex mapMu_
         -map~TopicPartition, shared_ptr~Replica~~ replicas_
         +get(tp) shared_ptr~Replica~
@@ -959,7 +961,7 @@ Shutdown: set `running=false`, `listener.close()`, `shutdown()` every registered
 ```python
 def applyLeaderAndIsr(req):
     for p in req.partitions:
-        r ← replicas_.getOrCreate(p.tp)                   # opens/recovers log on first use
+        r ← replicas_.getOrCreate(p.tp)                   # opens/recovers log on first use (R-11)
         with r.mu_:
             if p.leaderEpoch < r.leaderEpoch_: result FENCED_LEADER_EPOCH; continue
             if p.leaderEpoch == r.leaderEpoch_ and r.role_ matches: continue     # idempotent
@@ -979,6 +981,14 @@ def becomeFollower(epoch, leaderId):                      # holds mu_
     leaderEpoch_ ← epoch; leaderId_ ← leaderId; role_ ← FOLLOWER
     leader_ ← None; state ← TRUNCATING                    # fetcher performs §6.8 before fetching
     hwCv_.notify_all()
+
+def getOrCreate(tp):                                      # R-11
+    if r ← get(tp): return r                              # shared mapMu_
+    with createMu_:                                       # one creator at a time
+        if r ← get(tp): return r                          # another creator won
+        r ← Replica(PartitionLog.open(dataDir/tp))        # disk I/O, mapMu_ not held
+        with mapMu_ (exclusive): replicas_[tp] ← r
+        return r
 ```
 
 ### 6.4 High-Watermark Maintenance (leader)
@@ -1974,6 +1984,7 @@ def heartbeatLoop():
 |---|---|---|---|
 | `Replica::mu_` | `std::mutex` | Role, epoch, `LeaderState`, log mutation (append, truncate), HW writes | **Yes**: `pwrite`, and `fdatasync` under policy `batch`. Accepted: one writer per partition. |
 | `PartitionLog::segMu_` | `std::mutex` | `segments_` vector | No (snapshot, then unlock) |
+| `ReplicaManager::createMu_` | `std::mutex` | Creating a replica and opening its log (R-11) | **Yes**: log open and recovery. Only `getOrCreate` takes it. |
 | `ReplicaManager::mapMu_` | `std::shared_mutex` | Partition → replica map | No |
 | `HwNotifier::mu_` | `std::mutex` | `version_` | No |
 | `BoundedQueue::mu_` | `std::mutex` | Queue contents | No |
@@ -1983,8 +1994,8 @@ def heartbeatLoop():
 ### 11.2 Lock Ordering
 
 ```
-ReplicaManager::mapMu_  →  Replica::mu_  →  PartitionLog::segMu_
-                                         →  HwNotifier::mu_
+ReplicaManager::createMu_  →  ReplicaManager::mapMu_  →  Replica::mu_  →  PartitionLog::segMu_
+                                                                       →  HwNotifier::mu_
 ```
 
 - Never acquire a lock to the **left** of one already held.
@@ -2299,7 +2310,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 only fills in details, so the HLD is unchanged for both. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 and R-11 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2313,6 +2324,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-8 | §12.2 catalogue | No group inspection API | Added read-only **`DescribeGroup` (25)** | Functional tests and `elogctl describe-group` need to observe ownership and epochs |
 | R-9 | §12.3 errors | Error codes belong to the protocol | **`ErrorCode` is defined in `common`**, plus local-only `NETWORK_ERROR = −1`. Frame codec sits in `protocol`. | `Result` (common) holds an `ErrorCode`, and `common` may not depend on `protocol`. Socket failures need a code. |
 | R-10 | §12.2 / §16 config | Not specified | Broker gains **`request.timeout.ms`** (30 000), the send timeout used in §6.2. A frame with an API key the server does not handle gets an **error-only `INVALID_REQUEST` response**; the connection stays open. | §6.2 pseudocode used `cfg.requestTimeoutMs`, which §12.1 lacked. A valid frame is not a protocol violation, so closing the connection (NFR-SEC-02) is reserved for malformed frames. |
+| R-11 | §11 locking | Not specified | `ReplicaManager` gains **`createMu_`**, held by `getOrCreate` while it opens a new partition's log; `mapMu_` is taken only to look up or insert. Lock order: `createMu_ → mapMu_ → Replica::mu_`. | Opening a log does disk I/O (and recovery, §5.6), and two concurrent opens of one directory collide. Holding `mapMu_` would stall every produce and fetch lookup during it. |
 
 ---
 

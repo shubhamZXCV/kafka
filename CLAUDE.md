@@ -80,8 +80,8 @@ or reorder** instead of improvising. Merge with rebase or fast-forward, never sq
 ## Lock Order (LLD §11.2)
 
 ```
-ReplicaManager::mapMu_  →  Replica::mu_  →  PartitionLog::segMu_
-                                         →  HwNotifier::mu_
+ReplicaManager::createMu_  →  ReplicaManager::mapMu_  →  Replica::mu_  →  PartitionLog::segMu_
+                                                                       →  HwNotifier::mu_
 ```
 
 - Never acquire a lock to the **left** of one already held.
