@@ -5,9 +5,11 @@
 //     elogctl --coordinator HOST:PORT describe-topic <name>
 //     elogctl --coordinator HOST:PORT dump <topic> <partition> [--from N]
 //     elogctl --coordinator HOST:PORT health [--brokers N] [--timeout-ms T]
+//     elogctl log-verify <data-dir>              (offline; read-only)
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -20,6 +22,7 @@
 #include "elog/protocol/json_codec.h"
 #include "elog/protocol/msgpack_codec.h"
 #include "elog/protocol/record_batch.h"
+#include "elog/storage/log_verifier.h"
 #include "elog/tools/cli.h"
 
 namespace {
@@ -204,11 +207,32 @@ int health(RpcConnection& coordinator, const tools::Args& args) {
     }
 }
 
+// LLD §15.2: offline and read-only; exit 1 if anything is wrong.
+int logVerify(const tools::Args& args) {
+    if (args.positional().size() != 2 || !std::filesystem::is_directory(args.positional()[1])) {
+        return fail("usage: log-verify <data-dir>", 2);
+    }
+    json out = {{"dataDir", args.positional()[1]}, {"partitions", json::array()}};
+    bool ok = true;
+    for (const PartitionReport& p : verifyDataDir(args.positional()[1])) {
+        ok = ok && p.errors.empty();
+        out["partitions"].push_back({{"partition", p.name},
+                                     {"segments", p.segments},
+                                     {"batches", p.batches},
+                                     {"firstOffset", p.firstOffset},
+                                     {"nextOffset", p.nextOffset},
+                                     {"errors", p.errors}});
+    }
+    out["ok"] = ok;
+    std::cout << out.dump() << '\n';
+    return ok ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     auto args = tools::parseArgs(argc, argv, 1,
-                                 {{"--coordinator", "", true},
+                                 {{"--coordinator", ""},
                                   {"-p", "0"},
                                   {"-r", "0"},
                                   {"--min-isr", "1"},
@@ -218,14 +242,16 @@ int main(int argc, char** argv) {
     if (!args.ok()) {
         return fail(args.message(), 2);
     }
+    const std::string command =
+        args.value().positional().empty() ? "" : args.value().positional()[0];
+    if (command == "log-verify")
+        return logVerify(args.value());
     auto address = parseHostPort(args.value().get("--coordinator"));
     if (!address.ok()) {
         return fail(address.message(), 2);
     }
     RpcConnection coordinator(address.value().first, address.value().second,
                               std::chrono::milliseconds(5000));
-    const std::string command =
-        args.value().positional().empty() ? "" : args.value().positional()[0];
     if (command == "create-topic")
         return createTopic(coordinator, args.value());
     if (command == "describe-topic")
