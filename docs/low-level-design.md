@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.9 |
+| Version | 1.10 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -25,6 +25,7 @@
 | 1.7 | 2026-11-01 | R-14: `CreateTopic` validation and errors; offline leader is `-1` (§4.6, §7.5). |
 | 1.8 | 2026-11-01 | R-15: broker heartbeat errors, `LeaderAndIsr` push triggers and retries, `controllerIncarnation` (§4.6, §7.5). |
 | 1.9 | 2026-11-01 | R-16: manual-assignment consumer mode (§10.1, §10.5). |
+| 1.10 | 2026-11-01 | R-17: fetch only with at least half the in-flight queue free; note on sequential long-polls (§10.5). |
 
 ---
 
@@ -1900,6 +1901,10 @@ classDiagram
 
 ### 10.5 Fetcher
 
+**Credit low-water mark (R-17):** the fetcher waits until at least half the queue (`max(1, Q/2)`) is free, or the queue is empty, before it fetches. Fetching as soon as one slot frees would send many one-record fetches; the processing thread still always has records buffered. The credit sent is still the exact free count at that moment.
+
+**Sequential long-polls (R-17):** leaders are fetched one after another. A round asks for `maxWaitMs = 0` unless the previous round returned no records at all, so an idle leader never stalls busy ones; only when everything is idle does each request long-poll. Known limitation: while all partitions are idle, a record that arrives on one leader can wait up to `fetch.max.wait.ms` behind another leader's long-poll. Per-leader fetch loops would remove it; they are not needed for the experiments.
+
 **Manual mode (R-16):** with an empty `groupId` the consumer joins no group and commits nothing. It reads `assignment`, or every partition of `topics` if `assignment` is empty, starting at offset 0 (`earliest`) or at the partition's current HW (`latest`), and resets the same way on `OFFSET_OUT_OF_RANGE`. This is what the M1 walking skeleton and `elog-consumer --manual` use.
 
 ```python
@@ -1908,8 +1913,8 @@ def Fetcher.loop():
     while running:
         snap ← state_.snapshot()                           # version, owned (non-paused)
         free ← inflight_.freeSlots()
-        if free == 0 or not snap.owned:
-            inflight_.waitNotFull(timeout=100ms); continue  # FR-FETCH-05: no fetch without credit
+        if free < max(1, Q/2) and inflight_ not empty or not snap.owned:   # R-17
+            inflight_.waitFreeSlots(max(1, Q/2), timeout=100ms); continue  # FR-FETCH-05: no fetch without credit
         by_leader ← group snap.owned by MetadataCache.leaderFor(tp)
         for leader, tps in rotate(by_leader, rr):          # fairness
             resp ← call(leader, Fetch(credit=free, maxBytes, maxWait,
@@ -2326,7 +2331,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-16 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-17 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2346,6 +2351,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-14 | §12.2 `CreateTopic` | Only the partition-count mismatch specified | Name, partition count and `minIsr` are validated (`INVALID_REQUEST`); a spec differing only in `replicationFactor`/`minIsr` is `INVALID_REQUEST`; too few live brokers is `NOT_ENOUGH_REPLICAS`; an offline leader is reported as `-1`. | The topic name becomes a directory on every broker, so it must not contain `/` or be `..`. Each case needs a defined reply. |
 | R-15 | §7.5 liveness, pushes | Heartbeat errors, push triggers and retry policy, `controllerIncarnation` not specified | Bad heartbeats get `STALE_BROKER_INCARNATION`; `LeaderAndIsr` is pushed on registration and after `CreateTopic`; a failed push is retried after ~500 ms with the broker's current state while it stays alive; `controllerIncarnation` is the coordinator start time (s), informational. | A dead broker must re-register before it serves again; resending current state (not the failed request) can never deliver stale roles; per-partition epochs already fence. |
 | R-16 | §10 client | "Manual-assignment consumer" (implementation plan T1.6) not specified | `ConsumerConfig::assignment`; with an empty `groupId` the consumer reads the listed partitions (or all of `topics`) from `earliest` (0) or `latest` (HW), without a group or commits. | M1 needs a consumer before consumer groups exist (M3); the same fetcher and processing loop are reused by group mode. |
+| R-17 | §6.2 fetch credit | Fetch whenever credit > 0 | Fetch only once `max(1, Q/2)` slots are free (or the queue is empty); sequential per-leader long-polls documented as a latency limitation for idle multi-leader assignments. | With credit = one free slot, a busy consumer sent one-record fetches (20 000 records took 14 s at Q=50). |
 
 ---
 
