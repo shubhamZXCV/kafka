@@ -132,3 +132,31 @@ def test_F_STO_5_indexes_are_rebuilt(make_cluster, out_dir):
     assert all(index.stat().st_size > 0 for index in partition_dir.glob("*.index"))
     for start in (0, 4_321, 17_777, 29_999):
         assert dump(cluster, "t", 0, start)[0]["offset"] == start
+
+
+def test_F_STO_6_size_retention(make_cluster, out_dir):
+    """Small retention.bytes: old segments are deleted, the log start advances, and a
+    consumer starting at offset 0 resets to the new log start."""
+    cluster = make_cluster(brokers=1, broker_settings={
+        "segment.bytes": 64 << 10, "retention.bytes": 256 << 10,
+        "retention.check.interval.ms": 200})
+    create_topic(cluster, "t", 1)
+    wait_until(leaders_ready(cluster, "t"), 20, "partition leader")
+    assert start_producer(cluster, "t", out_dir, count=50_000).wait(120) == 0
+
+    # LLD §5.7 deletes the oldest segment only while the rest still hold at least
+    # retention.bytes, so about 256 KiB / 64 KiB + 2 segments remain of the several MiB.
+    wait_until(lambda: len(segment_files(cluster, 1, "t", 0)) <= 8, 20, "old segments deleted")
+    log_start = int(segment_files(cluster, 1, "t", 0)[0].stem)
+    assert log_start > 0
+    code, report = log_verify(cluster, 1)
+    assert code == 0 and report["partitions"][0]["firstOffset"] == log_start
+
+    remaining = 50_000 - log_start
+    assert start_consumer(cluster, "t", out_dir, count=remaining).wait(60) == 0
+    processed = load_processed(out_dir)
+    assert processed["start_offset"].min() == log_start
+    assert check_skipped(processed[processed["start_offset"] >= log_start]
+                         .assign(start_offset=lambda d: d["start_offset"] - log_start,
+                                 end_offset_excl=lambda d: d["end_offset_excl"] - log_start),
+                         {("t", 0): remaining}) == []
