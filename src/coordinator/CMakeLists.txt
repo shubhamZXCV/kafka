@@ -1,0 +1,9 @@
+add_library(elog_coordinator_lib STATIC
+    db.cc
+    schema.cc)
+
+target_include_directories(elog_coordinator_lib PUBLIC include)
+target_link_libraries(elog_coordinator_lib
+    PUBLIC elog_protocol
+    PRIVATE elog_sqlite3)
+elog_set_warnings(elog_coordinator_lib)
