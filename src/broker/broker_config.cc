@@ -24,6 +24,10 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("segment.bytes", 67'108'864, 16 << 10, 1 << 30),  // R-19 lower bound
         ConfigKey::integer("segment.ms", 604'800'000, 1000, INT64_MAX),
         ConfigKey::integer("index.interval.bytes", 4096, 512, 1 << 20),
+        ConfigKey::choice("log.flush.policy", "interval", {"batch", "interval", "none"}),
+        ConfigKey::integer("log.flush.interval.ms", 1000, 10, kOneDayMs),
+        ConfigKey::integer("recovery.checkpoint.interval.ms", 5000, 10, kOneDayMs),
+        ConfigKey::integer("hw.checkpoint.interval.ms", 5000, 10, kOneDayMs),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -52,6 +56,13 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.log.segmentBytes = static_cast<std::uint32_t>(config.getInt("segment.bytes"));
     cfg.log.segmentMs = config.getMs("segment.ms");
     cfg.log.indexIntervalBytes = static_cast<std::uint32_t>(config.getInt("index.interval.bytes"));
+    const std::string policy = config.getString("log.flush.policy");
+    cfg.log.flushPolicy = policy == "batch"  ? FlushPolicy::BATCH
+                          : policy == "none" ? FlushPolicy::NONE
+                                             : FlushPolicy::INTERVAL;
+    cfg.logFlushInterval = config.getMs("log.flush.interval.ms");
+    cfg.recoveryCheckpointInterval = config.getMs("recovery.checkpoint.interval.ms");
+    cfg.hwCheckpointInterval = config.getMs("hw.checkpoint.interval.ms");
     cfg.maxFrameBytes = static_cast<std::size_t>(config.getInt("max.frame.bytes"));
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");

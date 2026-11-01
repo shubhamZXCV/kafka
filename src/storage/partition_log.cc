@@ -63,6 +63,11 @@ Result<AppendInfo> PartitionLog::append(std::span<std::byte> batchBytes, Epoch e
     }
     const AppendInfo info{view.value().baseOffset(), view.value().lastOffset()};
     leo_.store(info.lastOffset + 1, std::memory_order_release);
+    if (cfg_.flushPolicy == FlushPolicy::BATCH) {
+        if (auto status = flush(); !status.ok()) {
+            return {status.error(), status.message()};
+        }
+    }
     return info;
 }
 
@@ -81,6 +86,28 @@ Status PartitionLog::roll() {
     }
     std::lock_guard lock(segMu_);  // lock order: Replica::mu_ → PartitionLog::segMu_
     segments_.push_back(std::move(segment).value());
+    return okStatus();
+}
+
+Status PartitionLog::flush() {
+    const Offset leo = this->leo();  // what this flush covers
+    const Offset from = recoveryPoint();
+    const auto segments = snapshot();
+    for (std::size_t i = 0; i < segments.size(); ++i) {
+        // Segment i holds offsets [base_i, base_i+1): it has nothing unflushed if the next
+        // segment already starts at or below the recovery point.
+        if (i + 1 < segments.size() && segments[i + 1]->baseOffset() <= from) {
+            continue;
+        }
+        if (auto status = segments[i]->flush(); !status.ok()) {
+            return status;
+        }
+        if (auto status = segments[i]->index().flush(); !status.ok()) {
+            return status;
+        }
+    }
+    // LLD §5.8: advance only after every sync succeeded.
+    recoveryPoint_.store(std::max(from, leo), std::memory_order_release);
     return okStatus();
 }
 

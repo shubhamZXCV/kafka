@@ -33,13 +33,31 @@ int BrokerServer::run() {
         logging::get("broker")->critical("data_dir_rejected error=\"{}\"", status.message());
         return 1;
     }
+    scheduleJobs();
+    scheduler_.start();
     agent_.start();
     const int exitCode = server_.run();
     agent_.stop();
+    scheduler_.stop();
+    // LLD §6.2: a clean stop leaves everything flushed and checkpointed.
+    replicas_.flushLogs();
+    replicas_.checkpointRecoveryPoints();
+    replicas_.checkpointHighWatermarks();
     if (exitCode == 0) {
         logging::get("broker")->info("stopped");
     }
     return exitCode;
+}
+
+// LLD §6.10.
+void BrokerServer::scheduleJobs() {
+    if (cfg_.log.flushPolicy == FlushPolicy::INTERVAL) {
+        scheduler_.every("flush", cfg_.logFlushInterval, [this] { replicas_.flushLogs(); });
+    }
+    scheduler_.every("recovery-point-checkpoint", cfg_.recoveryCheckpointInterval,
+                     [this] { replicas_.checkpointRecoveryPoints(); });
+    scheduler_.every("hw-checkpoint", cfg_.hwCheckpointInterval,
+                     [this] { replicas_.checkpointHighWatermarks(); });
 }
 
 void BrokerServer::shutdown() {

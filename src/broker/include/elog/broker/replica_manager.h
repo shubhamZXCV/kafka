@@ -38,6 +38,12 @@ public:
     // for new ones (LLD §6.3). `self` is this broker's ID.
     LeaderAndIsrResponse applyLeaderAndIsr(const LeaderAndIsrRequest& request, BrokerId self);
 
+    // Scheduler jobs (LLD §6.10): flush every log; write the recovery-point and
+    // high-watermark checkpoints into dataDir. Each logs its own failures.
+    void flushLogs();
+    void checkpointRecoveryPoints();
+    void checkpointHighWatermarks();
+
 private:
     const std::string dataDir_;
     const LogConfig logConfig_;

@@ -25,7 +25,10 @@ struct BrokerConfig {
     std::string advertisedHost;      // the host clients and the coordinator connect to
     std::string coordinatorAddress;  // "host:port"
     std::chrono::milliseconds brokerHeartbeatInterval{0};
-    LogConfig log;  // segment.bytes, segment.ms, index.interval.bytes
+    LogConfig log;  // segment.bytes, segment.ms, index.interval.bytes, log.flush.policy
+    std::chrono::milliseconds logFlushInterval{0};
+    std::chrono::milliseconds recoveryCheckpointInterval{0};
+    std::chrono::milliseconds hwCheckpointInterval{0};
     std::size_t maxFrameBytes = 0;
     int maxConnections = 0;
     std::chrono::milliseconds connectionIdle{0};  // receive timeout on client connections

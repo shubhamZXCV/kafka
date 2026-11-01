@@ -5,6 +5,7 @@
 
 #include "elog/common/logging.h"
 #include "elog/protocol/error_codes.h"
+#include "elog/storage/checkpoint_file.h"
 #include "elog/storage/partition_log.h"
 
 namespace elog {
@@ -78,6 +79,40 @@ std::vector<std::shared_ptr<Replica>> ReplicaManager::all() const {
         replicas.push_back(replica);
     }
     return replicas;
+}
+
+void ReplicaManager::flushLogs() {
+    for (const auto& replica : all()) {
+        if (auto status = replica->flushLog(); !status.ok()) {
+            const TopicPartition& tp = replica->topicPartition();
+            logging::get("storage")->error("flush_failed topic={} partition={} error=\"{}\"",
+                                           tp.topic, tp.partition, status.message());
+        }
+    }
+}
+
+void ReplicaManager::checkpointRecoveryPoints() {
+    std::map<TopicPartition, Offset> offsets;
+    for (const auto& replica : all()) {
+        offsets[replica->topicPartition()] = replica->recoveryPoint();
+    }
+    const std::string path = dataDir_ + "/recovery-point.checkpoint";
+    if (auto status = CheckpointFile::write(path, offsets); !status.ok()) {
+        logging::get("storage")->error("checkpoint_failed file={} error=\"{}\"", path,
+                                       status.message());
+    }
+}
+
+void ReplicaManager::checkpointHighWatermarks() {
+    std::map<TopicPartition, Offset> offsets;
+    for (const auto& replica : all()) {
+        offsets[replica->topicPartition()] = replica->hw();
+    }
+    const std::string path = dataDir_ + "/high-watermark.checkpoint";
+    if (auto status = CheckpointFile::write(path, offsets); !status.ok()) {
+        logging::get("storage")->error("checkpoint_failed file={} error=\"{}\"", path,
+                                       status.message());
+    }
 }
 
 }  // namespace elog

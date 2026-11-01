@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elog/broker/broker_config.h"
+#include "elog/broker/broker_scheduler.h"
 #include "elog/broker/coordinator_agent.h"
 #include "elog/broker/fetch_handler.h"
 #include "elog/broker/hw_notifier.h"
@@ -27,6 +28,8 @@ public:
     void shutdown();
 
 private:
+    void scheduleJobs();
+
     const BrokerConfig cfg_;
     HwNotifier hwNotifier_;
     ReplicaManager replicas_;
@@ -34,6 +37,7 @@ private:
     FetchHandler fetchHandler_;
     RequestDispatcher dispatcher_;
     CoordinatorAgent agent_;
+    BrokerScheduler scheduler_;
     FrameServer server_;
 };
 

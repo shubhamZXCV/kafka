@@ -106,6 +106,10 @@ public:
 
     const TopicPartition& topicPartition() const { return tp_; }
 
+    // Scheduler jobs (LLD §6.10, §11.3): flush the log; read its recovery point.
+    Status flushLog() { return log_->flush(); }
+    Offset recoveryPoint() const { return log_->recoveryPoint(); }
+
 private:
     void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);  // requires mu_
     void becomeFollower(Epoch epoch, BrokerId leader);                             // requires mu_
