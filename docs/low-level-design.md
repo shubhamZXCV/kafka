@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.11 |
+| Version | 1.12 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -27,6 +27,7 @@
 | 1.9 | 2026-11-01 | R-16: manual-assignment consumer mode (§10.1, §10.5). |
 | 1.10 | 2026-11-01 | R-17: fetch only with at least half the in-flight queue free; note on sequential long-polls (§10.5). |
 | 1.11 | 2026-11-01 | R-18: command lines and outputs of `elog-producer`, `elog-consumer` and `elogctl` (§15.2). |
+| 1.12 | 2026-11-02 | R-19: `segment.bytes` lower bound, `SparseIndex::mu_`, `dump --from`, `logStartOffset` on `OFFSET_OUT_OF_RANGE` (§5, §6.6, §11.1, §12.1, §15.2). |
 
 ---
 
@@ -1062,7 +1063,7 @@ def handleFetch(req):
             r ← replicas_.get(p.tp); validate LEADER and epoch (as produce)
             hw ← r.hw_.load(acquire)
             if p.fetchOffset > hw or p.fetchOffset < r.log_.logStartOffset():
-                out += OFFSET_OUT_OF_RANGE; continue
+                out += OFFSET_OUT_OF_RANGE(hw, logStartOffset); continue   # R-19: so the client can reset
             if credit == 0 or bytes_left == 0 or p.fetchOffset == hw:
                 out += empty(hw); continue
             raw ← r.log_.read(p.fetchOffset, max_exclusive=hw, max_bytes=bytes_left)
@@ -1906,7 +1907,7 @@ classDiagram
 
 **Sequential long-polls (R-17):** leaders are fetched one after another. A round asks for `maxWaitMs = 0` unless the previous round returned no records at all, so an idle leader never stalls busy ones; only when everything is idle does each request long-poll. Known limitation: while all partitions are idle, a record that arrives on one leader can wait up to `fetch.max.wait.ms` behind another leader's long-poll. Per-leader fetch loops would remove it; they are not needed for the experiments.
 
-**Manual mode (R-16):** with an empty `groupId` the consumer joins no group and commits nothing. It reads `assignment`, or every partition of `topics` if `assignment` is empty, starting at offset 0 (`earliest`) or at the partition's current HW (`latest`), and resets the same way on `OFFSET_OUT_OF_RANGE`. This is what the M1 walking skeleton and `elog-consumer --manual` use.
+**Manual mode (R-16):** with an empty `groupId` the consumer joins no group and commits nothing. It reads `assignment`, or every partition of `topics` if `assignment` is empty, starting at the log start (`earliest`) or at the partition's current HW (`latest`), and resets the same way on `OFFSET_OUT_OF_RANGE`, using the `logStartOffset` and `highWatermark` that response carries (R-19). This is what the M1 walking skeleton and `elog-consumer --manual` use.
 
 ```python
 def Fetcher.loop():
@@ -2003,6 +2004,7 @@ def heartbeatLoop():
 |---|---|---|---|
 | `Replica::mu_` | `std::mutex` | Role, epoch, `LeaderState`, log mutation (append, truncate), HW writes | **Yes**: `pwrite`, and `fdatasync` under policy `batch`. Accepted: one writer per partition. |
 | `PartitionLog::segMu_` | `std::mutex` | `segments_` vector | No (snapshot, then unlock) |
+| `SparseIndex::mu_` | `std::mutex` | One segment's index entries (R-19) | Yes: one 8-byte `pwrite` per entry. A leaf: nothing is taken while it is held. |
 | `ReplicaManager::createMu_` | `std::mutex` | Creating a replica and opening its log (R-11) | **Yes**: log open and recovery. Only `getOrCreate` takes it. |
 | `ReplicaManager::mapMu_` | `std::shared_mutex` | Partition → replica map | No |
 | `HwNotifier::mu_` | `std::mutex` | `version_` | No |
@@ -2054,7 +2056,7 @@ Precedence: built-in default < `--config <file>` (key=value) < `--set key=value`
 | `advertised.host` | hostname | | Returned in metadata |
 | `data.dir` | `./data` | | Local SSD (SRS §8.1) |
 | `coordinator.address` | `coordinator:9000` | | |
-| `segment.bytes` | 67 108 864 | 1 MiB – 1 GiB | ≤ 2³¹ |
+| `segment.bytes` | 67 108 864 | 16 KiB – 1 GiB | ≤ 2³¹; lower bound R-19 (F-STO-1 uses 64 KiB) |
 | `segment.ms` | 604 800 000 | ≥ 1 000 | |
 | `index.interval.bytes` | 4 096 | 512 – 1 MiB | |
 | `retention.bytes` | −1 | −1 or ≥ `segment.bytes` | −1 = unlimited |
@@ -2256,7 +2258,7 @@ tests/functional/
 | `elog-consumer` | `--topic T` (required), `--manual` (required until groups exist), `--partitions 0,1,…` (default: all), `--id c1`, `--count 0` (0 = until SIGTERM), `--inflight 1000`, `--reset earliest\|latest`, `--out .` | Manual mode (R-16). Writes `processed-<id>.csv` ranges at least every second and at exit (`owner_epoch` is 0 in manual mode) and `metrics-<id>.csv`. |
 | `elogctl create-topic <name> -p P -r R [--min-isr N]` | `--min-isr 1` | Exit 0 on success; otherwise the error name on stderr and exit 1. |
 | `elogctl describe-topic <name>` | | One JSON object: `name`, `partitions[]` with `partition`, `leader`, `leaderEpoch`, `replicas`, `isr`, `highWatermark` (read from the leader; −1 if unreachable). |
-| `elogctl dump <topic> <partition>` | | One JSON object per committed record, `{"offset", "key", "pid", "seq"}`, up to the HW at start. |
+| `elogctl dump <topic> <partition> [--from N]` | `--from 0` | One JSON object per committed record, `{"offset", "key", "pid", "seq"}`, from offset `N` (R-19) up to the HW at start. |
 | `elogctl health` | `--brokers 1`, `--timeout-ms 0` | Exit 0 once the coordinator answers `Metadata` with at least `brokers` live brokers, polling until the timeout; else exit 1. |
 
 `describe-group` and `describe-topic` are answered from the coordinator's `Metadata` request plus a small read-only `DescribeGroup` request (API key 25, JSON). `log-verify` links `elog_storage` and opens the log read-only.
@@ -2343,7 +2345,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-18 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-19 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2365,6 +2367,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-16 | §10 client | "Manual-assignment consumer" (implementation plan T1.6) not specified | `ConsumerConfig::assignment`; with an empty `groupId` the consumer reads the listed partitions (or all of `topics`) from `earliest` (0) or `latest` (HW), without a group or commits. | M1 needs a consumer before consumer groups exist (M3); the same fetcher and processing loop are reused by group mode. |
 | R-17 | §6.2 fetch credit | Fetch whenever credit > 0 | Fetch only once `max(1, Q/2)` slots are free (or the queue is empty); sequential per-leader long-polls documented as a latency limitation for idle multi-leader assignments. | With credit = one free slot, a busy consumer sent one-record fetches (20 000 records took 14 s at Q=50). |
 | R-18 | §15.2 tools | Commands listed, flags and outputs not specified | Flags, defaults, exit codes and output formats of `elog-producer`, `elog-consumer` and `elogctl` as tabled in §15.2. | Tests and experiment scripts drive the tools and parse their output, so both must be fixed. |
+| R-19 | §12.1, §15.3 storage | `segment.bytes` ≥ 1 MiB; index locking, mid-batch reads by tools and the earliest offset after retention not specified | `segment.bytes` may be as small as 16 KiB; `SparseIndex::mu_` is a leaf lock; `elogctl dump --from N`; an `OFFSET_OUT_OF_RANGE` fetch response carries `highWatermark` and `logStartOffset`, and "earliest" means the log start. | F-STO-1 uses 64 KiB segments; readers look up the index while the writer appends; F-STO-2 starts mid-batch; F-STO-6 needs a consumer at 0 to land on the new log start. |
 
 ---
 
