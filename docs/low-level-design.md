@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.5 |
+| Version | 1.6 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -21,6 +21,7 @@
 | 1.3 | 2026-10-31 | R-10: broker `request.timeout.ms` (§12.1); reply to API keys a server does not handle (§6.2). |
 | 1.4 | 2026-11-01 | R-11: `ReplicaManager::createMu_` serialises log creation, so `mapMu_` is never held across a log open (§6.1, §6.3, §11.1, §11.2). |
 | 1.5 | 2026-11-01 | R-12: `LeaderAndIsr` carries `minIsr` (§4.6, §6.1, §6.3); broker `produce.throttle.hint.ms` (§6.5, §12.1). |
+| 1.6 | 2026-11-01 | R-13: coordinator connection keys (§12.2); the event loop generates its own ticks (§7.1, §7.2). |
 
 ---
 
@@ -1183,7 +1184,6 @@ classDiagram
         -Listener listener_
         -BoundedQueue~Event~ inbound_
         -EventLoop loop_
-        -Ticker ticker_
         -BrokerPusher pusher_
         +run() int
         -serveConnection(Socket)
@@ -1325,7 +1325,7 @@ def handle(ev):
         PushResultEvent(r)           → retry failed LeaderAndIsr deliveries
 ```
 
-- **Ticker:** enqueues `TickEvent(time::monotonicMs())` every `coordinator.tick.ms` (default 100 ms). It uses a dedicated reserved slot, so ticks never block behind a full queue. This bounds detection latency to `timeout + tick`.
+- **Ticks (R-13):** the loop itself handles `TickEvent(time::monotonicMs())` every `coordinator.tick.ms` (default 100 ms): it waits on the queue only until the next tick is due, and checks the tick deadline after every event. Ticks therefore never wait behind a full queue, with no ticker thread. This bounds detection latency to `timeout + tick`.
 - **BrokerPusher:** a separate thread sends `LeaderAndIsr` to brokers. It **never touches state**. Results come back as `PushResultEvent`. Pushes are idempotent (epoch-checked), so retries are safe.
 
 ### 7.3 Group Membership and Rebalance
@@ -2070,6 +2070,8 @@ Precedence: built-in default < `--config <file>` (key=value) < `--set key=value`
 | `coordinator.tick.ms` | 100 | 10 – 1 000 | Bounds detection jitter |
 | `inbound.queue.capacity` | 10 000 | | |
 | `queue.admission.ms` | 1 000 | | Then `THROTTLED` |
+| `max.frame.bytes` / `max.connections` | 8 388 608 / 256 | | As for the broker (R-13) |
+| `connection.idle.ms` / `request.timeout.ms` | 300 000 / 30 000 | | Receive / send timeouts on connections (R-13) |
 | `broker.session.timeout.ms` | 6 000 | ≥ 2 × broker heartbeat | |
 | `group.default.assignor` | `sticky` | `roundrobin`, `sticky` | FR-ASSIGN-04 |
 | `group.min.session.timeout.ms` | 1 000 | | Rejects lower values |
@@ -2312,7 +2314,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-12 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-13 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2328,6 +2330,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-10 | §12.2 / §16 config | Not specified | Broker gains **`request.timeout.ms`** (30 000), the send timeout used in §6.2. A frame with an API key the server does not handle gets an **error-only `INVALID_REQUEST` response**; the connection stays open. | §6.2 pseudocode used `cfg.requestTimeoutMs`, which §12.1 lacked. A valid frame is not a protocol violation, so closing the connection (NFR-SEC-02) is reserved for malformed frames. |
 | R-11 | §11 locking | Not specified | `ReplicaManager` gains **`createMu_`**, held by `getOrCreate` while it opens a new partition's log; `mapMu_` is taken only to look up or insert. Lock order: `createMu_ → mapMu_ → Replica::mu_`. | Opening a log does disk I/O (and recovery, §5.6), and two concurrent opens of one directory collide. Holding `mapMu_` would stall every produce and fetch lookup during it. |
 | R-12 | §12.2 / §16 config | Not specified | `LeaderAndIsr` partition state gains **`minIsr`** (from `CreateTopic`), stored in `LeaderState` by `becomeLeader`. Broker gains **`produce.throttle.hint.ms`** (100), the `throttleMs` returned with `THROTTLED`. | §6.5 checks `leader_.minIsr`, but only the coordinator knew it. §6.5 used `cfg.throttleHintMs`, which §12.1 lacked. |
+| R-13 | §7 coordinator | Ticker thread; coordinator connection settings not specified | The **event loop generates ticks itself** (waits on the queue only until the next tick, checks the deadline after each event), replacing the Ticker thread and its reserved queue slot. The coordinator gains the broker's **`max.frame.bytes`, `max.connections`, `connection.idle.ms`, `request.timeout.ms`** keys with the same defaults. | Same guarantee (ticks never wait behind a full queue) with one thread fewer and no special queue slot. Both servers share one connection server (`FrameServer`), which needs these limits. |
 
 ---
 
