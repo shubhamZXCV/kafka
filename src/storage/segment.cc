@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -85,6 +86,9 @@ Result<std::shared_ptr<Segment>> Segment::fromFd(int fd, const std::string& dir,
         fd, baseOffset, std::move(path), std::move(index).value(), time::monotonicMs(), size));
     // Also rebuilt: an index pointing past the log, or none at all for a non-empty log
     // (deleted, or lost before it was flushed).
+    segment->observeTimestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::seconds(st.st_mtim.tv_sec))
+                                  .count());
     if (rebuild || !segment->index().fitsLog(size) ||
         (size > 0 && segment->index().entryCount() == 0)) {
         if (auto status = segment->rebuildIndex(); !status.ok()) {
@@ -122,6 +126,12 @@ Status Segment::rebuildIndex() {
     logging::get("storage")->info("index_rebuilt segment={} entries={}", path_,
                                   index_->entryCount());
     return okStatus();  // no sync: an index can always be rebuilt, and log flushes sync it
+}
+
+void Segment::observeTimestamp(TimeMs ts) {
+    if (ts > maxTimestampMs_.load(std::memory_order_relaxed)) {
+        maxTimestampMs_.store(ts, std::memory_order_relaxed);  // only the appender writes
+    }
 }
 
 std::string Segment::indexPath() const {

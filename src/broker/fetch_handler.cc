@@ -41,6 +41,8 @@ FetchResponse FetchHandler::readOnce(const FetchRequest& request, std::uint32_t&
             replica->readForConsumer(p.fetchOffset, credit, bytesLeft, p.currentLeaderEpoch);
         if (!data.ok()) {
             out.error = data.error();
+            out.highWatermark = replica->hw();  // R-19: lets the client reset its position
+            out.logStartOffset = replica->logStartOffset();
             response.partitions.push_back(std::move(out));
             continue;
         }

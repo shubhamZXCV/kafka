@@ -169,6 +169,7 @@ Result<AppendInfo> PartitionLog::append(std::span<std::byte> batchBytes, Epoch e
     if (auto status = active.append(batchBytes); !status.ok()) {
         return {status.error(), status.message()};
     }
+    active.observeTimestamp(readBatchHeader(batchBytes).maxTimestampMs);
     const AppendInfo info{view.value().baseOffset(), view.value().lastOffset()};
     leo_.store(info.lastOffset + 1, std::memory_order_release);
     if (cfg_.flushPolicy == FlushPolicy::BATCH) {
@@ -195,6 +196,41 @@ Status PartitionLog::roll() {
     std::lock_guard lock(segMu_);  // lock order: Replica::mu_ → PartitionLog::segMu_
     segments_.push_back(std::move(segment).value());
     return okStatus();
+}
+
+std::size_t PartitionLog::applyRetention(TimeMs nowWallMs) {
+    std::size_t deleted = 0;
+    while (true) {
+        std::shared_ptr<Segment> oldest;
+        {
+            std::lock_guard lock(segMu_);  // lock order: Replica::mu_ → PartitionLog::segMu_
+            if (segments_.size() < 2) {
+                break;
+            }
+            std::uint64_t total = 0;
+            for (const auto& segment : segments_) {
+                total += segment->size();
+            }
+            const auto& candidate = segments_.front();
+            const bool bySize = cfg_.retentionBytes >= 0 &&
+                                total - candidate->size() >= std::uint64_t(cfg_.retentionBytes);
+            const bool byTime =
+                cfg_.retentionMs >= 0 && nowWallMs - candidate->maxTimestampMs() > cfg_.retentionMs;
+            if (!bySize && !byTime) {
+                break;
+            }
+            oldest = candidate;
+            segments_.erase(segments_.begin());
+            logStart_.store(segments_.front()->baseOffset(), std::memory_order_release);
+        }
+        // Readers holding a snapshot keep their fd: Linux frees the file when they close it.
+        std::filesystem::remove(oldest->path());
+        std::filesystem::remove(oldest->indexPath());
+        logging::get("storage")->info("segment_deleted segment={} log_start={}",
+                                      oldest->baseOffset(), logStartOffset());
+        ++deleted;
+    }
+    return deleted;
 }
 
 Status PartitionLog::flush() {

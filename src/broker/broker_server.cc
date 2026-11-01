@@ -58,6 +58,8 @@ void BrokerServer::scheduleJobs() {
                      [this] { replicas_.checkpointRecoveryPoints(); });
     scheduler_.every("hw-checkpoint", cfg_.hwCheckpointInterval,
                      [this] { replicas_.checkpointHighWatermarks(); });
+    scheduler_.every("retention", cfg_.retentionCheckInterval,
+                     [this] { replicas_.applyRetention(); });
 }
 
 void BrokerServer::shutdown() {

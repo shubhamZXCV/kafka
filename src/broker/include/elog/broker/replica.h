@@ -109,6 +109,8 @@ public:
     // Scheduler jobs (LLD §6.10, §11.3): flush the log; read its recovery point.
     Status flushLog() { return log_->flush(); }
     Offset recoveryPoint() const { return log_->recoveryPoint(); }
+    std::size_t applyRetention(TimeMs nowWallMs);
+    Offset logStartOffset() const { return log_->logStartOffset(); }
 
 private:
     void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);  // requires mu_

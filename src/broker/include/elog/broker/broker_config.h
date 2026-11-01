@@ -29,6 +29,7 @@ struct BrokerConfig {
     std::chrono::milliseconds logFlushInterval{0};
     std::chrono::milliseconds recoveryCheckpointInterval{0};
     std::chrono::milliseconds hwCheckpointInterval{0};
+    std::chrono::milliseconds retentionCheckInterval{0};
     std::size_t maxFrameBytes = 0;
     int maxConnections = 0;
     std::chrono::milliseconds connectionIdle{0};  // receive timeout on client connections

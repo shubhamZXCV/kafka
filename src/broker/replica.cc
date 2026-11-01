@@ -146,6 +146,11 @@ Result<FetchData> Replica::readForConsumer(Offset from, std::uint32_t credit, st
     return out;
 }
 
+std::size_t Replica::applyRetention(TimeMs nowWallMs) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog (LLD §11.2)
+    return log_->applyRetention(nowWallMs);
+}
+
 Status Replica::awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch) {
     std::unique_lock lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
     const auto leadershipMoved = [&] { return role_ != Role::LEADER || leaderEpoch_ != epoch; };

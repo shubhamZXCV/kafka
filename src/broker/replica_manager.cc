@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "elog/common/logging.h"
+#include "elog/common/time.h"
 #include "elog/protocol/error_codes.h"
 #include "elog/storage/checkpoint_file.h"
 #include "elog/storage/partition_log.h"
@@ -127,6 +128,12 @@ void ReplicaManager::checkpointHighWatermarks() {
     if (auto status = CheckpointFile::write(path, offsets); !status.ok()) {
         logging::get("storage")->error("checkpoint_failed file={} error=\"{}\"", path,
                                        status.message());
+    }
+}
+
+void ReplicaManager::applyRetention() {
+    for (const auto& replica : all()) {
+        replica->applyRetention(time::wallMs());
     }
 }
 

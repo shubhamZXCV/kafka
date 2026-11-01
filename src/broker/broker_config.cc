@@ -28,6 +28,9 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("log.flush.interval.ms", 1000, 10, kOneDayMs),
         ConfigKey::integer("recovery.checkpoint.interval.ms", 5000, 10, kOneDayMs),
         ConfigKey::integer("hw.checkpoint.interval.ms", 5000, 10, kOneDayMs),
+        ConfigKey::integerOrDisabled("retention.bytes", -1, 16 << 10, INT64_MAX),
+        ConfigKey::integerOrDisabled("retention.ms", -1, 1000, INT64_MAX),
+        ConfigKey::integer("retention.check.interval.ms", 30'000, 10, kOneDayMs),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -63,6 +66,9 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.logFlushInterval = config.getMs("log.flush.interval.ms");
     cfg.recoveryCheckpointInterval = config.getMs("recovery.checkpoint.interval.ms");
     cfg.hwCheckpointInterval = config.getMs("hw.checkpoint.interval.ms");
+    cfg.log.retentionBytes = config.getInt("retention.bytes");
+    cfg.log.retentionMs = config.getInt("retention.ms");
+    cfg.retentionCheckInterval = config.getMs("retention.check.interval.ms");
     cfg.maxFrameBytes = static_cast<std::size_t>(config.getInt("max.frame.bytes"));
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");

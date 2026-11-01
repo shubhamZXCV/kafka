@@ -39,6 +39,8 @@ struct LogConfig {
     std::uint32_t segmentBytes = 64 << 20;
     std::chrono::milliseconds segmentMs{604'800'000};
     std::uint32_t indexIntervalBytes = 4096;
+    std::int64_t retentionBytes = -1;  // -1: no size limit (LLD §5.7)
+    std::int64_t retentionMs = -1;     // -1: no time limit
 };
 
 // The append-only log of one partition replica (LLD §5): segments in offset order, the
@@ -75,6 +77,11 @@ public:
     // point to the LEO read before the sync (LLD §5.8). Called by the broker scheduler,
     // concurrently with append().
     Status flush();
+
+    // Deletes the oldest closed segments while the log is over retention.bytes or their
+    // newest record is older than retention.ms (LLD §5.7). The active segment is never
+    // deleted. Caller holds Replica::mu_, like every other log mutation. Returns how many.
+    std::size_t applyRetention(TimeMs nowWallMs);
 
     // Everything below this offset is known to be on disk; recovery scans from here.
     Offset recoveryPoint() const { return recoveryPoint_.load(std::memory_order_acquire); }

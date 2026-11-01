@@ -126,7 +126,10 @@ void Fetcher::accept(const FetchPartitionResponse& response, const TopicPartitio
         logging::get("consumer")
             ->warn("offset_out_of_range topic={} partition={} position={}", tp.topic, tp.partition,
                    positions_[tp]);
-        positions_.erase(tp);  // resolved again from auto.offset.reset (R-16)
+        // R-16, R-19: reset per auto.offset.reset, from the bounds the broker reported.
+        positions_[tp] = cfg_.autoOffsetReset == ConsumerConfig::Reset::Earliest
+                             ? response.logStartOffset
+                             : response.highWatermark;
         return;
     }
     if (response.error != ErrorCode::NONE) {

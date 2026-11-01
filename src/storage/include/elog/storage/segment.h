@@ -61,6 +61,11 @@ public:
     std::string indexPath() const;
     TimeMs createdMs() const { return createdMs_; }  // monotonic, for segment.ms
 
+    // Wall-clock time of the newest record, for retention.ms (LLD §5.7). For a segment
+    // reopened at startup it starts as the file's modification time.
+    TimeMs maxTimestampMs() const { return maxTimestampMs_.load(std::memory_order_relaxed); }
+    void observeTimestamp(TimeMs ts);
+
 private:
     Segment(int fd, Offset baseOffset, std::string path, std::unique_ptr<SparseIndex> index,
             TimeMs createdMs, std::uint32_t size)
@@ -80,6 +85,7 @@ private:
     const std::unique_ptr<SparseIndex> index_;
     const TimeMs createdMs_;
     std::atomic<std::uint32_t> size_;
+    std::atomic<TimeMs> maxTimestampMs_{0};
 };
 
 // The file names of the segment starting at baseOffset (LLD §5.2.1, §5.2.2).

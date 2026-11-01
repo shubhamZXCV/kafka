@@ -43,6 +43,7 @@ public:
     void flushLogs();
     void checkpointRecoveryPoints();
     void checkpointHighWatermarks();
+    void applyRetention();
 
 private:
     const std::string dataDir_;
