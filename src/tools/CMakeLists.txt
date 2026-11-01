@@ -10,3 +10,7 @@ elog_set_warnings(elog-producer)
 add_executable(elog-consumer elog_consumer.cc)
 target_link_libraries(elog-consumer PRIVATE elog_tools_common elog_client)
 elog_set_warnings(elog-consumer)
+
+add_executable(elogctl elogctl.cc)
+target_link_libraries(elogctl PRIVATE elog_tools_common elog_client nlohmann_json::nlohmann_json)
+elog_set_warnings(elogctl)
