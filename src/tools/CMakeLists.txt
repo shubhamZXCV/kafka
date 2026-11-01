@@ -6,3 +6,7 @@ elog_set_warnings(elog_tools_common)
 add_executable(elog-producer elog_producer.cc)
 target_link_libraries(elog-producer PRIVATE elog_tools_common elog_client)
 elog_set_warnings(elog-producer)
+
+add_executable(elog-consumer elog_consumer.cc)
+target_link_libraries(elog-consumer PRIVATE elog_tools_common elog_client)
+elog_set_warnings(elog-consumer)
