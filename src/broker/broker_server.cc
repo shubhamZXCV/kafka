@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "elog/common/logging.h"
+#include "elog/storage/checkpoint_file.h"
 
 namespace elog {
 
@@ -27,6 +28,11 @@ BrokerServer::BrokerServer(BrokerConfig cfg)
           [this](const Frame& request) { return dispatcher_.dispatch(request); }, "broker") {}
 
 int BrokerServer::run() {
+    // LLD §5.2.4: refuse to serve another broker's data directory.
+    if (auto status = checkOrWriteMetaProperties(cfg_.dataDir, cfg_.brokerId); !status.ok()) {
+        logging::get("broker")->critical("data_dir_rejected error=\"{}\"", status.message());
+        return 1;
+    }
     agent_.start();
     const int exitCode = server_.run();
     agent_.stop();

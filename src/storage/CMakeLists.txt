@@ -1,4 +1,5 @@
 add_library(elog_storage STATIC
+    checkpoint_file.cc
     partition_log.cc
     segment.cc
     sparse_index.cc)
