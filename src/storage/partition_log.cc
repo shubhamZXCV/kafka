@@ -50,10 +50,18 @@ Result<std::unique_ptr<PartitionLog>> PartitionLog::open(const std::string& dir,
 // The .log files of `dir` in offset order, or a new segment 0 if there are none.
 Result<std::vector<std::shared_ptr<Segment>>> PartitionLog::openSegments(const std::string& dir,
                                                                          const LogConfig& cfg) {
+    // LLD §5.6, in order: drop leftovers of interrupted writes, then find the segments.
     std::vector<Offset> bases;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-        const auto name = entry.path().filename().string();
-        if (entry.path().extension() == ".log" && name.size() == 24) {
+        const auto& path = entry.path();
+        const auto name = path.filename().string();
+        const bool orphanIndex =
+            path.extension() == ".index" &&
+            !std::filesystem::exists(std::filesystem::path(path).replace_extension(".log"));
+        if (path.extension() == ".tmp" || orphanIndex) {
+            logging::get("storage")->warn("orphan_file_removed file={}", path.string());
+            std::filesystem::remove(path);
+        } else if (path.extension() == ".log" && name.size() == 24) {
             bases.push_back(std::stoull(name.substr(0, 20)));
         }
     }

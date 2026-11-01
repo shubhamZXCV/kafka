@@ -52,6 +52,10 @@ public:
     // Cuts the file at `pos` and syncs it (recovery and truncation, LLD §5.5–5.6).
     Status truncateToPos(std::uint32_t pos);
 
+    // Recreates the index from the batch headers (LLD §5.6). open() calls it for an index
+    // that is invalid, points past the log, or is missing for a non-empty log.
+    Status rebuildIndex();
+
     SparseIndex& index() const { return *index_; }
     const std::string& path() const { return path_; }
     std::string indexPath() const;

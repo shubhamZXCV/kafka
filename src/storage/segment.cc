@@ -7,9 +7,12 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <system_error>
 
+#include "elog/common/logging.h"
 #include "elog/common/time.h"
+#include "elog/protocol/record_batch.h"
 
 namespace elog {
 
@@ -65,14 +68,60 @@ Result<std::shared_ptr<Segment>> Segment::fromFd(int fd, const std::string& dir,
         ::close(fd);
         return {ErrorCode::UNKNOWN_SERVER_ERROR, "stat segment " + path + " failed or too large"};
     }
-    auto index = SparseIndex::open(dir + "/" + indexFileName(baseOffset), indexIntervalBytes);
+    const std::string indexPath = dir + "/" + indexFileName(baseOffset);
+    auto index = SparseIndex::open(indexPath, indexIntervalBytes);
+    bool rebuild = false;
+    if (!index.ok() && index.error() == ErrorCode::CORRUPT_MESSAGE) {
+        std::filesystem::remove(indexPath);  // LLD §5.6: an invalid index is rebuilt
+        index = SparseIndex::open(indexPath, indexIntervalBytes);
+        rebuild = true;
+    }
     if (!index.ok()) {
         ::close(fd);
         return {index.error(), index.message()};
     }
-    return std::shared_ptr<Segment>(new Segment(fd, baseOffset, std::move(path),
-                                                std::move(index).value(), time::monotonicMs(),
-                                                static_cast<std::uint32_t>(st.st_size)));
+    const auto size = static_cast<std::uint32_t>(st.st_size);
+    auto segment = std::shared_ptr<Segment>(new Segment(
+        fd, baseOffset, std::move(path), std::move(index).value(), time::monotonicMs(), size));
+    // Also rebuilt: an index pointing past the log, or none at all for a non-empty log
+    // (deleted, or lost before it was flushed).
+    if (rebuild || !segment->index().fitsLog(size) ||
+        (size > 0 && segment->index().entryCount() == 0)) {
+        if (auto status = segment->rebuildIndex(); !status.ok()) {
+            return {status.error(), status.message()};
+        }
+    }
+    return segment;
+}
+
+// Walks the batch headers and re-adds entries exactly as appends would have. Stops at the
+// first header that does not fit; the torn-tail scan that follows deals with it.
+Status Segment::rebuildIndex() {
+    if (auto status = index_->truncateAfterPos(0); !status.ok()) {
+        return status;
+    }
+    std::vector<std::byte> header;
+    std::uint32_t pos = 0;
+    const std::uint32_t end = size();
+    while (end - pos >= batch::kHeaderBytes) {
+        if (auto status = readAt(pos, batch::kHeaderBytes, header); !status.ok()) {
+            return status;
+        }
+        const RecordBatchHeader h = readBatchHeader(header);
+        const std::uint64_t total = batch::kRecordBatchOverhead + h.batchLength;
+        if (total > end - pos || h.baseOffset < baseOffset_) {
+            break;
+        }
+        const auto relative = static_cast<std::uint32_t>(h.baseOffset - baseOffset_);
+        if (auto status = index_->maybeAppend(relative, pos, static_cast<std::uint32_t>(total));
+            !status.ok()) {
+            return status;
+        }
+        pos += static_cast<std::uint32_t>(total);
+    }
+    logging::get("storage")->info("index_rebuilt segment={} entries={}", path_,
+                                  index_->entryCount());
+    return okStatus();  // no sync: an index can always be rebuilt, and log flushes sync it
 }
 
 std::string Segment::indexPath() const {
