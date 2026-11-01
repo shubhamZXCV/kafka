@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.10 |
+| Version | 1.11 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -26,6 +26,7 @@
 | 1.8 | 2026-11-01 | R-15: broker heartbeat errors, `LeaderAndIsr` push triggers and retries, `controllerIncarnation` (§4.6, §7.5). |
 | 1.9 | 2026-11-01 | R-16: manual-assignment consumer mode (§10.1, §10.5). |
 | 1.10 | 2026-11-01 | R-17: fetch only with at least half the in-flight queue free; note on sequential long-polls (§10.5). |
+| 1.11 | 2026-11-01 | R-18: command lines and outputs of `elog-producer`, `elog-consumer` and `elogctl` (§15.2). |
 
 ---
 
@@ -2247,6 +2248,17 @@ tests/functional/
 | `elogctl log-verify <data-dir>` | Offline: segments, offset ranges, CRC status; non-zero exit on corruption | Recovery, replica convergence |
 | `elogctl health` | exit code | Waiting for a cluster to be ready |
 
+**Tool command lines (R-18).** Every tool takes `--coordinator HOST:PORT`. Unknown flags are an error (exit 2).
+
+| Tool | Flags (defaults) | Behaviour and output |
+|---|---|---|
+| `elog-producer` | `--topic T` (required), `--id p1`, `--count 0` (0 = until SIGTERM), `--rate 0` (records/s, 0 = unlimited), `--keys 100` (0 = no key), `--payload 100` (pad bytes), `--seed 1`, `--out .` | Record *i* has `seq = i` and key `key-<k>`, *k* uniform in `[0, keys)` from a generator seeded with `seed`; the value is the §4.5 map. Writes `produced-<id>.csv` (contiguous acked runs per partition, flushed every second and at exit) and `metrics-<id>.csv`. Exit 0 if every record was acked, 1 otherwise. |
+| `elog-consumer` | `--topic T` (required), `--manual` (required until groups exist), `--partitions 0,1,…` (default: all), `--id c1`, `--count 0` (0 = until SIGTERM), `--inflight 1000`, `--reset earliest\|latest`, `--out .` | Manual mode (R-16). Writes `processed-<id>.csv` ranges at least every second and at exit (`owner_epoch` is 0 in manual mode) and `metrics-<id>.csv`. |
+| `elogctl create-topic <name> -p P -r R [--min-isr N]` | `--min-isr 1` | Exit 0 on success; otherwise the error name on stderr and exit 1. |
+| `elogctl describe-topic <name>` | | One JSON object: `name`, `partitions[]` with `partition`, `leader`, `leaderEpoch`, `replicas`, `isr`, `highWatermark` (read from the leader; −1 if unreachable). |
+| `elogctl dump <topic> <partition>` | | One JSON object per committed record, `{"offset", "key", "pid", "seq"}`, up to the HW at start. |
+| `elogctl health` | `--brokers 1`, `--timeout-ms 0` | Exit 0 once the coordinator answers `Metadata` with at least `brokers` live brokers, polling until the timeout; else exit 1. |
+
 `describe-group` and `describe-topic` are answered from the coordinator's `Metadata` request plus a small read-only `DescribeGroup` request (API key 25, JSON). `log-verify` links `elog_storage` and opens the log read-only.
 
 - **Running:**
@@ -2331,7 +2343,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-17 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-18 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2352,6 +2364,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-15 | §7.5 liveness, pushes | Heartbeat errors, push triggers and retry policy, `controllerIncarnation` not specified | Bad heartbeats get `STALE_BROKER_INCARNATION`; `LeaderAndIsr` is pushed on registration and after `CreateTopic`; a failed push is retried after ~500 ms with the broker's current state while it stays alive; `controllerIncarnation` is the coordinator start time (s), informational. | A dead broker must re-register before it serves again; resending current state (not the failed request) can never deliver stale roles; per-partition epochs already fence. |
 | R-16 | §10 client | "Manual-assignment consumer" (implementation plan T1.6) not specified | `ConsumerConfig::assignment`; with an empty `groupId` the consumer reads the listed partitions (or all of `topics`) from `earliest` (0) or `latest` (HW), without a group or commits. | M1 needs a consumer before consumer groups exist (M3); the same fetcher and processing loop are reused by group mode. |
 | R-17 | §6.2 fetch credit | Fetch whenever credit > 0 | Fetch only once `max(1, Q/2)` slots are free (or the queue is empty); sequential per-leader long-polls documented as a latency limitation for idle multi-leader assignments. | With credit = one free slot, a busy consumer sent one-record fetches (20 000 records took 14 s at Q=50). |
+| R-18 | §15.2 tools | Commands listed, flags and outputs not specified | Flags, defaults, exit codes and output formats of `elog-producer`, `elog-consumer` and `elogctl` as tabled in §15.2. | Tests and experiment scripts drive the tools and parse their output, so both must be fixed. |
 
 ---
 
