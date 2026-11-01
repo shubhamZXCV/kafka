@@ -50,8 +50,11 @@ struct LogConfig {
 // their I/O without it.
 class PartitionLog {
 public:
-    // Creates the log in a new directory dir (made if missing), starting at offset 0.
-    static Result<std::unique_ptr<PartitionLog>> open(const std::string& dir, LogConfig cfg);
+    // Opens the log in `dir`: a new one starting at offset 0 if there are no segments,
+    // otherwise the existing segments, after recovering a torn tail (LLD §5.6). Batches
+    // below `recoveryPoint` were flushed and are trusted; the rest are scanned.
+    static Result<std::unique_ptr<PartitionLog>> open(const std::string& dir, LogConfig cfg,
+                                                      Offset recoveryPoint = 0);
 
     // Validates and appends one batch (LLD §5.3), rolling to a new segment first if the
     // active one is full or old enough.
@@ -78,7 +81,12 @@ public:
     std::size_t segmentCount() const;
 
 private:
-    PartitionLog(std::string dir, LogConfig cfg, std::shared_ptr<Segment> first);
+    PartitionLog(std::string dir, LogConfig cfg, std::vector<std::shared_ptr<Segment>> segments,
+                 Offset leo);
+    static Result<std::vector<std::shared_ptr<Segment>>> openSegments(const std::string& dir,
+                                                                      const LogConfig& cfg);
+    static Result<Offset> recover(std::vector<std::shared_ptr<Segment>>& segments,
+                                  Offset recoveryPoint);
     bool shouldRoll(const Segment& active, std::size_t batchBytes) const;
     Status roll();  // requires the append caller's exclusivity
     std::vector<std::shared_ptr<Segment>> snapshot() const;

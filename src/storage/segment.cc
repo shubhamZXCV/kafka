@@ -1,6 +1,7 @@
 #include "elog/storage/segment.h"
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -42,13 +43,40 @@ Result<std::shared_ptr<Segment>> Segment::create(const std::string& dir, Offset 
         const auto status = ioError("create segment", path, errno);
         return {status.error(), status.message()};
     }
+    return fromFd(fd, dir, baseOffset, path, indexIntervalBytes);
+}
+
+Result<std::shared_ptr<Segment>> Segment::open(const std::string& dir, Offset baseOffset,
+                                               std::uint32_t indexIntervalBytes) {
+    const std::string path = dir + "/" + segmentFileName(baseOffset);
+    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        const auto status = ioError("open segment", path, errno);
+        return {status.error(), status.message()};
+    }
+    return fromFd(fd, dir, baseOffset, path, indexIntervalBytes);
+}
+
+Result<std::shared_ptr<Segment>> Segment::fromFd(int fd, const std::string& dir, Offset baseOffset,
+                                                 std::string path,
+                                                 std::uint32_t indexIntervalBytes) {
+    struct stat st {};
+    if (::fstat(fd, &st) != 0 || st.st_size > UINT32_MAX) {
+        ::close(fd);
+        return {ErrorCode::UNKNOWN_SERVER_ERROR, "stat segment " + path + " failed or too large"};
+    }
     auto index = SparseIndex::open(dir + "/" + indexFileName(baseOffset), indexIntervalBytes);
     if (!index.ok()) {
         ::close(fd);
         return {index.error(), index.message()};
     }
-    return std::shared_ptr<Segment>(
-        new Segment(fd, baseOffset, path, std::move(index).value(), time::monotonicMs()));
+    return std::shared_ptr<Segment>(new Segment(fd, baseOffset, std::move(path),
+                                                std::move(index).value(), time::monotonicMs(),
+                                                static_cast<std::uint32_t>(st.st_size)));
+}
+
+std::string Segment::indexPath() const {
+    return path_.substr(0, path_.size() - 4) + ".index";  // NNN.log -> NNN.index
 }
 
 Segment::~Segment() {
@@ -99,6 +127,14 @@ Status Segment::readAt(std::uint64_t pos, std::size_t len, std::vector<std::byte
         done += static_cast<std::size_t>(n);
     }
     return okStatus();
+}
+
+Status Segment::truncateToPos(std::uint32_t pos) {
+    if (::ftruncate(fd_, static_cast<off_t>(pos)) != 0) {
+        return ioError("truncate segment", path_, errno);
+    }
+    size_.store(pos, std::memory_order_release);
+    return flush();
 }
 
 Status Segment::flush() {

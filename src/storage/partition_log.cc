@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <system_error>
 
+#include "elog/common/logging.h"
 #include "elog/common/time.h"
 #include "elog/protocol/record_batch.h"
 
@@ -19,23 +20,111 @@ constexpr std::size_t kMaxSegmentsSyncedOneByOne = 4;
 
 }  // namespace
 
-PartitionLog::PartitionLog(std::string dir, LogConfig cfg, std::shared_ptr<Segment> first)
-    : dir_(std::move(dir)), cfg_(cfg) {
-    logStart_.store(first->baseOffset(), std::memory_order_release);
-    segments_.push_back(std::move(first));
+PartitionLog::PartitionLog(std::string dir, LogConfig cfg,
+                           std::vector<std::shared_ptr<Segment>> segments, Offset leo)
+    : dir_(std::move(dir)), cfg_(cfg), segments_(std::move(segments)) {
+    logStart_.store(segments_.front()->baseOffset(), std::memory_order_release);
+    leo_.store(leo, std::memory_order_release);
+    recoveryPoint_.store(leo, std::memory_order_release);  // everything left was verified
 }
 
-Result<std::unique_ptr<PartitionLog>> PartitionLog::open(const std::string& dir, LogConfig cfg) {
+Result<std::unique_ptr<PartitionLog>> PartitionLog::open(const std::string& dir, LogConfig cfg,
+                                                         Offset recoveryPoint) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) {
         return {ErrorCode::UNKNOWN_SERVER_ERROR, "create log dir " + dir + ": " + ec.message()};
     }
-    auto segment = Segment::create(dir, /*baseOffset=*/0, cfg.indexIntervalBytes);
-    if (!segment.ok()) {
-        return {segment.error(), segment.message()};
+    auto segments = openSegments(dir, cfg);
+    if (!segments.ok()) {
+        return {segments.error(), segments.message()};
     }
-    return std::unique_ptr<PartitionLog>(new PartitionLog(dir, cfg, std::move(segment).value()));
+    auto leo = recover(segments.value(), recoveryPoint);
+    if (!leo.ok()) {
+        return {leo.error(), leo.message()};
+    }
+    return std::unique_ptr<PartitionLog>(
+        new PartitionLog(dir, cfg, std::move(segments).value(), leo.value()));
+}
+
+// The .log files of `dir` in offset order, or a new segment 0 if there are none.
+Result<std::vector<std::shared_ptr<Segment>>> PartitionLog::openSegments(const std::string& dir,
+                                                                         const LogConfig& cfg) {
+    std::vector<Offset> bases;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        const auto name = entry.path().filename().string();
+        if (entry.path().extension() == ".log" && name.size() == 24) {
+            bases.push_back(std::stoull(name.substr(0, 20)));
+        }
+    }
+    std::sort(bases.begin(), bases.end());
+    std::vector<std::shared_ptr<Segment>> segments;
+    for (Offset base : bases) {
+        auto segment = Segment::open(dir, base, cfg.indexIntervalBytes);
+        if (!segment.ok()) {
+            return {segment.error(), segment.message()};
+        }
+        segments.push_back(std::move(segment).value());
+    }
+    if (segments.empty()) {
+        auto segment = Segment::create(dir, 0, cfg.indexIntervalBytes);
+        if (!segment.ok()) {
+            return {segment.error(), segment.message()};
+        }
+        segments.push_back(std::move(segment).value());
+    }
+    return segments;
+}
+
+// LLD §5.6: scan the segments that may hold unflushed batches. The first batch that is cut
+// short, has an impossible length, or fails its CRC/magic check marks the torn tail: the
+// segment is truncated there and every later segment deleted. Returns the log end offset.
+Result<Offset> PartitionLog::recover(std::vector<std::shared_ptr<Segment>>& segments,
+                                     Offset recoveryPoint) {
+    std::size_t first = 0;  // the segment holding the recovery point
+    while (first + 1 < segments.size() && segments[first + 1]->baseOffset() <= recoveryPoint) {
+        ++first;
+    }
+    Offset leo = 0;
+    std::vector<std::byte> header, batch;
+    for (std::size_t i = first; i < segments.size(); ++i) {
+        Segment& seg = *segments[i];
+        leo = seg.baseOffset();  // an empty segment ends where it starts
+        std::uint32_t pos = 0;
+        while (seg.size() - pos >= batch::kHeaderBytes) {
+            if (!seg.readAt(pos, batch::kHeaderBytes, header).ok()) {
+                break;
+            }
+            const std::uint64_t total =
+                batch::kRecordBatchOverhead + readBatchHeader(header).batchLength;
+            if (total > seg.size() - pos || !seg.readAt(pos, total, batch).ok()) {
+                break;
+            }
+            auto view = RecordBatchView::parse(batch);
+            if (!view.ok()) {
+                break;
+            }
+            leo = view.value().lastOffset() + 1;
+            pos += static_cast<std::uint32_t>(total);
+        }
+        if (pos < seg.size()) {
+            logging::get("storage")->warn("torn_tail_truncated segment={} position={} size={}",
+                                          seg.baseOffset(), pos, seg.size());
+            for (std::size_t later = i + 1; later < segments.size(); ++later) {
+                std::filesystem::remove(segments[later]->path());
+                std::filesystem::remove(segments[later]->indexPath());
+            }
+            segments.resize(i + 1);
+            if (auto status = seg.truncateToPos(pos); !status.ok()) {
+                return {status.error(), status.message()};
+            }
+            if (auto status = seg.index().truncateAfterPos(pos); !status.ok()) {
+                return {status.error(), status.message()};
+            }
+            break;
+        }
+    }
+    return leo;
 }
 
 Result<AppendInfo> PartitionLog::append(std::span<std::byte> batchBytes, Epoch epoch,

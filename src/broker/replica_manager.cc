@@ -10,10 +10,25 @@
 
 namespace elog {
 
+namespace {
+
+// LLD §5.6: a missing or unreadable checkpoint only means recovery scans more of the log.
+std::map<TopicPartition, Offset> loadRecoveryPoints(const std::string& dataDir) {
+    auto points = CheckpointFile::read(dataDir + "/recovery-point.checkpoint");
+    if (!points.ok()) {
+        logging::get("storage")->warn("recovery_checkpoint_ignored error=\"{}\"", points.message());
+        return {};
+    }
+    return std::move(points).value();
+}
+
+}  // namespace
+
 ReplicaManager::ReplicaManager(std::string dataDir, LogConfig logConfig,
                                std::ptrdiff_t maxPendingProduce, HwNotifier& hwNotifier)
     : dataDir_(std::move(dataDir)),
       logConfig_(logConfig),
+      recoveryPoints_(loadRecoveryPoints(dataDir_)),
       maxPendingProduce_(maxPendingProduce),
       hwNotifier_(hwNotifier) {}
 
@@ -34,7 +49,7 @@ Result<std::shared_ptr<Replica>> ReplicaManager::getOrCreate(const TopicPartitio
         return replica;  // another creator got here first
     }
     const std::string dir = dataDir_ + "/" + tp.topic + "-" + std::to_string(tp.partition);
-    auto log = PartitionLog::open(dir, logConfig_);
+    auto log = PartitionLog::open(dir, logConfig_, recoveryPoints_[tp]);
     if (!log.ok()) {
         logging::get("broker")->error("replica_open_failed topic={} partition={} error=\"{}\"",
                                       tp.topic, tp.partition, log.message());

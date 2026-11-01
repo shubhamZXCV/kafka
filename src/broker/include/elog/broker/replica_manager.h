@@ -47,7 +47,8 @@ public:
 private:
     const std::string dataDir_;
     const LogConfig logConfig_;
-    const std::ptrdiff_t maxPendingProduce_;  // admission slots per new replica
+    std::map<TopicPartition, Offset> recoveryPoints_;  // from the checkpoint at startup
+    const std::ptrdiff_t maxPendingProduce_;           // admission slots per new replica
     HwNotifier& hwNotifier_;
     std::mutex createMu_;
     mutable std::shared_mutex mapMu_;

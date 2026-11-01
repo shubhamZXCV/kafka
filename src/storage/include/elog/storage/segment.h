@@ -23,8 +23,8 @@ namespace elog {
 // only below a size() they have loaded.
 class Segment {
 public:
-    // Creates a new, empty segment file and its index. Fails if the file already exists:
-    // reopening existing segments needs crash recovery, which arrives with LLD §5.6.
+    // Creates a new, empty segment file and its index. Fails if the file already exists, so
+    // data is never overwritten; existing segments are reopened with open().
     static Result<std::shared_ptr<Segment>> create(const std::string& dir, Offset baseOffset,
                                                    std::uint32_t indexIntervalBytes);
 
@@ -45,24 +45,37 @@ public:
     // fdatasync: written bytes survive a power failure once this returns.
     Status flush();
 
+    // Opens an existing segment file and its index (startup recovery, LLD §5.6).
+    static Result<std::shared_ptr<Segment>> open(const std::string& dir, Offset baseOffset,
+                                                 std::uint32_t indexIntervalBytes);
+
+    // Cuts the file at `pos` and syncs it (recovery and truncation, LLD §5.5–5.6).
+    Status truncateToPos(std::uint32_t pos);
+
     SparseIndex& index() const { return *index_; }
+    const std::string& path() const { return path_; }
+    std::string indexPath() const;
     TimeMs createdMs() const { return createdMs_; }  // monotonic, for segment.ms
 
 private:
     Segment(int fd, Offset baseOffset, std::string path, std::unique_ptr<SparseIndex> index,
-            TimeMs createdMs)
+            TimeMs createdMs, std::uint32_t size)
         : fd_(fd),
           baseOffset_(baseOffset),
           path_(std::move(path)),
           index_(std::move(index)),
-          createdMs_(createdMs) {}
+          createdMs_(createdMs),
+          size_(size) {}
+    static Result<std::shared_ptr<Segment>> fromFd(int fd, const std::string& dir,
+                                                   Offset baseOffset, std::string path,
+                                                   std::uint32_t indexIntervalBytes);
 
     const int fd_;
     const Offset baseOffset_;
     const std::string path_;  // for error messages
     const std::unique_ptr<SparseIndex> index_;
     const TimeMs createdMs_;
-    std::atomic<std::uint32_t> size_{0};
+    std::atomic<std::uint32_t> size_;
 };
 
 // The file names of the segment starting at baseOffset (LLD §5.2.1, §5.2.2).
