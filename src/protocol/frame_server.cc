@@ -93,6 +93,9 @@ bool FrameServer::startConnection(Socket socket) {
         connections_[id].socket = shared;
         connections_[id].thread = std::thread([this, shared, id] {
             serveConnection(*shared, id);
+            // Close the connection now; the registry keeps the (shut-down) descriptor until
+            // this thread is reaped, so shutdown() can never hit a reused descriptor.
+            shared->shutdown();
             std::lock_guard doneLock(connMu_);
             if (auto it = connections_.find(id); it != connections_.end()) {
                 it->second.finished = true;
