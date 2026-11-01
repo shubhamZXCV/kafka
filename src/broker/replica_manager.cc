@@ -9,9 +9,10 @@
 
 namespace elog {
 
-ReplicaManager::ReplicaManager(std::string dataDir, std::ptrdiff_t maxPendingProduce,
-                               HwNotifier& hwNotifier)
+ReplicaManager::ReplicaManager(std::string dataDir, LogConfig logConfig,
+                               std::ptrdiff_t maxPendingProduce, HwNotifier& hwNotifier)
     : dataDir_(std::move(dataDir)),
+      logConfig_(logConfig),
       maxPendingProduce_(maxPendingProduce),
       hwNotifier_(hwNotifier) {}
 
@@ -32,7 +33,7 @@ Result<std::shared_ptr<Replica>> ReplicaManager::getOrCreate(const TopicPartitio
         return replica;  // another creator got here first
     }
     const std::string dir = dataDir_ + "/" + tp.topic + "-" + std::to_string(tp.partition);
-    auto log = PartitionLog::open(dir);
+    auto log = PartitionLog::open(dir, logConfig_);
     if (!log.ok()) {
         logging::get("broker")->error("replica_open_failed topic={} partition={} error=\"{}\"",
                                       tp.topic, tp.partition, log.message());

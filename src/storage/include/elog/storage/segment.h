@@ -11,6 +11,7 @@
 
 #include "elog/common/result.h"
 #include "elog/common/types.h"
+#include "elog/storage/sparse_index.h"
 
 namespace elog {
 
@@ -22,9 +23,10 @@ namespace elog {
 // only below a size() they have loaded.
 class Segment {
 public:
-    // Creates a new, empty segment file. Fails if the file already exists: reopening
-    // existing segments needs crash recovery, which arrives with LLD §5.6.
-    static Result<std::shared_ptr<Segment>> create(const std::string& dir, Offset baseOffset);
+    // Creates a new, empty segment file and its index. Fails if the file already exists:
+    // reopening existing segments needs crash recovery, which arrives with LLD §5.6.
+    static Result<std::shared_ptr<Segment>> create(const std::string& dir, Offset baseOffset,
+                                                   std::uint32_t indexIntervalBytes);
 
     Segment(const Segment&) = delete;
     Segment& operator=(const Segment&) = delete;
@@ -43,17 +45,28 @@ public:
     // fdatasync: written bytes survive a power failure once this returns.
     Status flush();
 
+    SparseIndex& index() const { return *index_; }
+    TimeMs createdMs() const { return createdMs_; }  // monotonic, for segment.ms
+
 private:
-    Segment(int fd, Offset baseOffset, std::string path)
-        : fd_(fd), baseOffset_(baseOffset), path_(std::move(path)) {}
+    Segment(int fd, Offset baseOffset, std::string path, std::unique_ptr<SparseIndex> index,
+            TimeMs createdMs)
+        : fd_(fd),
+          baseOffset_(baseOffset),
+          path_(std::move(path)),
+          index_(std::move(index)),
+          createdMs_(createdMs) {}
 
     const int fd_;
     const Offset baseOffset_;
     const std::string path_;  // for error messages
+    const std::unique_ptr<SparseIndex> index_;
+    const TimeMs createdMs_;
     std::atomic<std::uint32_t> size_{0};
 };
 
-// The file name of the segment starting at baseOffset (LLD §5.2.1).
+// The file names of the segment starting at baseOffset (LLD §5.2.1, §5.2.2).
 std::string segmentFileName(Offset baseOffset);
+std::string indexFileName(Offset baseOffset);
 
 }  // namespace elog

@@ -21,6 +21,9 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::string("coordinator.address", "coordinator:9000"),
         ConfigKey::integer("broker.heartbeat.interval.ms", 2000, 100, 60'000),
         ConfigKey::string("data.dir", "./data"),
+        ConfigKey::integer("segment.bytes", 67'108'864, 16 << 10, 1 << 30),  // R-19 lower bound
+        ConfigKey::integer("segment.ms", 604'800'000, 1000, INT64_MAX),
+        ConfigKey::integer("index.interval.bytes", 4096, 512, 1 << 20),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -46,6 +49,9 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     }
     cfg.coordinatorAddress = config.getString("coordinator.address");
     cfg.brokerHeartbeatInterval = config.getMs("broker.heartbeat.interval.ms");
+    cfg.log.segmentBytes = static_cast<std::uint32_t>(config.getInt("segment.bytes"));
+    cfg.log.segmentMs = config.getMs("segment.ms");
+    cfg.log.indexIntervalBytes = static_cast<std::uint32_t>(config.getInt("index.interval.bytes"));
     cfg.maxFrameBytes = static_cast<std::size_t>(config.getInt("max.frame.bytes"));
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");

@@ -17,7 +17,7 @@ FrameServerConfig serverConfig(const BrokerConfig& cfg) {
 
 BrokerServer::BrokerServer(BrokerConfig cfg)
     : cfg_(std::move(cfg)),
-      replicas_(cfg_.dataDir, cfg_.maxPendingProduce, hwNotifier_),
+      replicas_(cfg_.dataDir, cfg_.log, cfg_.maxPendingProduce, hwNotifier_),
       produceHandler_(replicas_, cfg_),
       fetchHandler_(replicas_, hwNotifier_, cfg_),
       dispatcher_(produceHandler_, fetchHandler_, replicas_, cfg_.brokerId),

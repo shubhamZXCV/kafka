@@ -8,6 +8,7 @@
 
 #include "elog/common/config.h"
 #include "elog/common/types.h"
+#include "elog/storage/partition_log.h"
 
 namespace elog {
 
@@ -24,6 +25,7 @@ struct BrokerConfig {
     std::string advertisedHost;      // the host clients and the coordinator connect to
     std::string coordinatorAddress;  // "host:port"
     std::chrono::milliseconds brokerHeartbeatInterval{0};
+    LogConfig log;  // segment.bytes, segment.ms, index.interval.bytes
     std::size_t maxFrameBytes = 0;
     int maxConnections = 0;
     std::chrono::milliseconds connectionIdle{0};  // receive timeout on client connections

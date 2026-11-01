@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <system_error>
 
+#include "elog/common/time.h"
+
 namespace elog {
 
 namespace {
@@ -25,7 +27,14 @@ std::string segmentFileName(Offset baseOffset) {
     return name;
 }
 
-Result<std::shared_ptr<Segment>> Segment::create(const std::string& dir, Offset baseOffset) {
+std::string indexFileName(Offset baseOffset) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "%020llu.index", static_cast<unsigned long long>(baseOffset));
+    return name;
+}
+
+Result<std::shared_ptr<Segment>> Segment::create(const std::string& dir, Offset baseOffset,
+                                                 std::uint32_t indexIntervalBytes) {
     const std::string path = dir + "/" + segmentFileName(baseOffset);
     // O_EXCL: never silently overwrite an existing segment (and the data in it).
     const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
@@ -33,7 +42,13 @@ Result<std::shared_ptr<Segment>> Segment::create(const std::string& dir, Offset 
         const auto status = ioError("create segment", path, errno);
         return {status.error(), status.message()};
     }
-    return std::shared_ptr<Segment>(new Segment(fd, baseOffset, path));
+    auto index = SparseIndex::open(dir + "/" + indexFileName(baseOffset), indexIntervalBytes);
+    if (!index.ok()) {
+        ::close(fd);
+        return {index.error(), index.message()};
+    }
+    return std::shared_ptr<Segment>(
+        new Segment(fd, baseOffset, path, std::move(index).value(), time::monotonicMs()));
 }
 
 Segment::~Segment() {

@@ -22,7 +22,8 @@ namespace elog {
 // only getOrCreate takes it.
 class ReplicaManager {
 public:
-    ReplicaManager(std::string dataDir, std::ptrdiff_t maxPendingProduce, HwNotifier& hwNotifier);
+    ReplicaManager(std::string dataDir, LogConfig logConfig, std::ptrdiff_t maxPendingProduce,
+                   HwNotifier& hwNotifier);
 
     // The replica for tp, or nullptr if this broker does not host it.
     std::shared_ptr<Replica> get(const TopicPartition& tp) const;
@@ -39,6 +40,7 @@ public:
 
 private:
     const std::string dataDir_;
+    const LogConfig logConfig_;
     const std::ptrdiff_t maxPendingProduce_;  // admission slots per new replica
     HwNotifier& hwNotifier_;
     std::mutex createMu_;
