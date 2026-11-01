@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <variant>
 
 #include "elog/common/logging.h"
 #include "elog/common/time.h"
@@ -9,9 +10,19 @@
 
 namespace elog {
 
+namespace {
+
+constexpr TimeMs kPushRetryDelayMs = 500;  // R-15
+
+}  // namespace
+
 EventLoop::EventLoop(std::chrono::milliseconds tick, std::chrono::milliseconds brokerSessionTimeout,
-                     Repository& repo)
-    : tick_(tick), meta_(repo), brokers_(repo, brokerSessionTimeout) {}
+                     Repository& repo, BrokerPusher& pusher)
+    : tick_(tick),
+      meta_(repo),
+      brokers_(repo, brokerSessionTimeout),
+      pusher_(pusher),
+      controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
 
 Status EventLoop::load() {
     return meta_.load();
@@ -19,7 +30,7 @@ Status EventLoop::load() {
 
 // R-13: wait for a request only until the next tick is due, and check the tick deadline
 // after every request, so ticks never wait behind a full queue.
-void EventLoop::run(BoundedQueue<RequestEvent>& inbound) {
+void EventLoop::run(BoundedQueue<Event>& inbound) {
     using Clock = std::chrono::steady_clock;
     auto nextTick = Clock::now() + tick_;
     while (true) {
@@ -27,7 +38,7 @@ void EventLoop::run(BoundedQueue<RequestEvent>& inbound) {
             std::chrono::duration_cast<std::chrono::milliseconds>(nextTick - Clock::now());
         auto event = inbound.pop(std::max(untilTick, std::chrono::milliseconds(0)));
         if (event) {
-            handle(*event);
+            std::visit([this](auto& e) { handle(e); }, *event);
         } else if (inbound.closed()) {
             return;  // closed and drained
         }
@@ -43,12 +54,46 @@ void EventLoop::run(BoundedQueue<RequestEvent>& inbound) {
 void EventLoop::handle(RequestEvent& event) {
     try {
         event.reply->complete(dispatch(event.frame));
+        pushNewRoles();
     } catch (const std::exception& e) {
         logging::get("coordinator")
             ->error("handler_failed api={} correlation={} error=\"{}\"",
                     apiKeyName(event.frame.apiKey), event.frame.correlationId, e.what());
         event.reply->complete(encodeErrorResponse(event.frame, ErrorCode::UNKNOWN_SERVER_ERROR));
     }
+}
+
+// R-15: retry later with the broker's current state, while it lives in the same
+// incarnation. A broker that re-registered gets a full push anyway.
+void EventLoop::handle(const PushResultEvent& event) {
+    pushRetries_[event.broker] = {event.incarnation, time::monotonicMs() + kPushRetryDelayMs};
+}
+
+// R-15: a registered broker gets every partition it hosts (possibly none: it then knows it
+// has nothing to serve); each replica of a new topic gets that topic's partitions.
+void EventLoop::pushNewRoles() {
+    for (BrokerId broker : brokers_.takeRegistered()) {
+        push(broker, nullptr);
+    }
+    for (const std::string& topic : meta_.takeCreatedTopics()) {
+        for (const BrokerAddress& broker : brokers_.liveBrokers()) {
+            push(broker.id, &topic);
+        }
+    }
+}
+
+void EventLoop::push(BrokerId broker, const std::string* topic) {
+    const auto live = brokers_.live(broker);
+    if (!live) {
+        return;  // it gets everything when it registers again
+    }
+    auto partitions = meta_.partitionsHostedBy(broker, topic);
+    if (topic && partitions.empty()) {
+        return;
+    }
+    pusher_.enqueue({live->address,
+                     live->incarnation,
+                     {controllerIncarnation_, std::move(partitions), brokers_.liveBrokers()}});
 }
 
 Frame EventLoop::dispatch(const Frame& request) {
@@ -73,6 +118,17 @@ Frame EventLoop::dispatch(const Frame& request) {
 // LLD §7.2. Leader election for dead brokers and group session timeouts hook in here.
 void EventLoop::onTick(TimeMs now) {
     brokers_.onTick(now);
+    for (auto it = pushRetries_.begin(); it != pushRetries_.end();) {
+        if (it->second.dueMs > now) {
+            ++it;
+            continue;
+        }
+        const auto live = brokers_.live(it->first);
+        if (live && live->incarnation == it->second.incarnation) {
+            push(it->first, nullptr);
+        }
+        it = pushRetries_.erase(it);
+    }
 }
 
 }  // namespace elog

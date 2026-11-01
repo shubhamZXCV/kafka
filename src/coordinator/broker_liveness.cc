@@ -1,5 +1,7 @@
 #include "elog/coordinator/broker_liveness.h"
 
+#include <utility>
+
 #include "elog/common/logging.h"
 #include "elog/protocol/error_response.h"
 #include "elog/protocol/json_codec.h"
@@ -29,6 +31,7 @@ Frame BrokerLiveness::onRegister(const Frame& request, TimeMs now) {
                       request.correlationId);
     }
     brokers_[r.brokerId] = {{r.brokerId, r.host, r.port}, incarnation.value(), true, now};
+    registered_.push_back(r.brokerId);
     logging::get("coordinator")
         ->info("broker_registered broker={} host={} port={} incarnation={}", r.brokerId, r.host,
                r.port, incarnation.value());
@@ -64,6 +67,18 @@ std::vector<BrokerId> BrokerLiveness::onTick(TimeMs now) {
         }
     }
     return dead;
+}
+
+std::optional<BrokerLiveness::LiveBroker> BrokerLiveness::live(BrokerId id) const {
+    const auto it = brokers_.find(id);
+    if (it == brokers_.end() || !it->second.alive) {
+        return std::nullopt;
+    }
+    return LiveBroker{it->second.address, it->second.incarnation};
+}
+
+std::vector<BrokerId> BrokerLiveness::takeRegistered() {
+    return std::exchange(registered_, {});
 }
 
 std::vector<BrokerAddress> BrokerLiveness::liveBrokers() const {

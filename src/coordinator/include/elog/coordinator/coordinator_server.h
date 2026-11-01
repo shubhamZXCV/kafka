@@ -2,7 +2,7 @@
 
 #include "elog/common/bounded_queue.h"
 #include "elog/coordinator/coordinator_config.h"
-#include "elog/coordinator/event_loop.h"
+#include "elog/coordinator/event.h"
 #include "elog/protocol/frame.h"
 #include "elog/protocol/frame_server.h"
 
@@ -28,7 +28,7 @@ private:
     Frame handle(const Frame& request);  // called by every connection thread
 
     const CoordinatorConfig cfg_;
-    BoundedQueue<RequestEvent> inbound_;
+    BoundedQueue<Event> inbound_;  // requests and push results for the event loop
     FrameServer server_;
 };
 

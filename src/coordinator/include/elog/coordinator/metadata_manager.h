@@ -24,6 +24,14 @@ public:
     Frame onCreateTopic(const Frame& request, const std::vector<BrokerAddress>& liveBrokers);
     Frame onMetadata(const Frame& request, const std::vector<BrokerAddress>& liveBrokers) const;
 
+    // The partitions `broker` is a replica of, as LeaderAndIsr states; only those of
+    // `topic` if it is set.
+    std::vector<PartitionState> partitionsHostedBy(BrokerId broker,
+                                                   const std::string* topic = nullptr) const;
+
+    // Topics created since the last call, whose roles must be pushed (R-15).
+    std::vector<std::string> takeCreatedTopics();
+
 private:
     ErrorCode createTopic(const CreateTopicRequest& request,
                           const std::vector<BrokerAddress>& liveBrokers);
@@ -31,6 +39,7 @@ private:
 
     Repository& repo_;
     std::map<std::string, TopicRecord> topics_;
+    std::vector<std::string> created_;
 };
 
 }  // namespace elog

@@ -5,6 +5,8 @@
 #include <utility>
 
 #include "elog/common/logging.h"
+#include "elog/coordinator/broker_pusher.h"
+#include "elog/coordinator/event_loop.h"
 #include "elog/protocol/error_response.h"
 
 namespace elog {
@@ -22,16 +24,19 @@ int CoordinatorServer::run() {
             ->error("db_open_failed path={} error=\"{}\"", cfg_.dbPath, repo.message());
         return 1;
     }
-    EventLoop loop(cfg_.tick, cfg_.brokerSessionTimeout, *repo.value());
+    BrokerPusher pusher(inbound_);
+    EventLoop loop(cfg_.tick, cfg_.brokerSessionTimeout, *repo.value(), pusher);
     if (auto status = loop.load(); !status.ok()) {
         logging::get("coordinator")->error("load_failed error=\"{}\"", status.message());
         return 1;
     }
+    pusher.start();
     std::thread loopThread([&] { loop.run(inbound_); });
     const int exitCode = server_.run();
     // Every connection thread has been joined, so nothing waits on the loop any more.
     inbound_.close();
     loopThread.join();
+    pusher.stop();
     if (exitCode == 0) {
         logging::get("coordinator")->info("stopped");
     }

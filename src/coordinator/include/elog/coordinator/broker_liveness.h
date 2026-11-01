@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "elog/common/types.h"
@@ -28,6 +29,15 @@ public:
 
     std::vector<BrokerAddress> liveBrokers() const;
 
+    struct LiveBroker {
+        BrokerAddress address;
+        std::uint32_t incarnation = 0;
+    };
+    std::optional<LiveBroker> live(BrokerId id) const;
+
+    // Brokers registered since the last call, whose roles must be pushed (R-15).
+    std::vector<BrokerId> takeRegistered();
+
 private:
     struct BrokerState {
         BrokerAddress address;
@@ -39,6 +49,7 @@ private:
     Repository& repo_;
     const std::chrono::milliseconds sessionTimeout_;
     std::map<BrokerId, BrokerState> brokers_;
+    std::vector<BrokerId> registered_;
 };
 
 }  // namespace elog

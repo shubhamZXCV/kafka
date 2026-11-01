@@ -1,6 +1,7 @@
 #include "elog/coordinator/metadata_manager.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "elog/common/logging.h"
 #include "elog/protocol/error_response.h"
@@ -98,6 +99,7 @@ ErrorCode MetadataManager::createTopic(const CreateTopicRequest& request,
     logging::get("coordinator")
         ->info("topic_created topic={} partitions={} replication_factor={} min_isr={}", topic.name,
                topic.partitions, topic.replicationFactor, topic.minIsr);
+    created_.push_back(topic.name);
     topics_.emplace(topic.name, std::move(topic));
     return ErrorCode::NONE;
 }
@@ -118,6 +120,27 @@ Frame MetadataManager::onMetadata(const Frame& request,
         response.topics.push_back(describe(name));
     }
     return encode(response, request.correlationId);
+}
+
+std::vector<PartitionState> MetadataManager::partitionsHostedBy(BrokerId broker,
+                                                                const std::string* topic) const {
+    std::vector<PartitionState> states;
+    for (const auto& [name, t] : topics_) {
+        if (topic && name != *topic) {
+            continue;
+        }
+        for (const PartitionRecord& p : t.partitionStates) {
+            if (std::find(p.replicas.begin(), p.replicas.end(), broker) != p.replicas.end()) {
+                states.push_back(
+                    {name, p.partition, p.leader, p.leaderEpoch, p.isr, p.replicas, t.minIsr});
+            }
+        }
+    }
+    return states;
+}
+
+std::vector<std::string> MetadataManager::takeCreatedTopics() {
+    return std::exchange(created_, {});
 }
 
 TopicMetadata MetadataManager::describe(const std::string& name) const {
