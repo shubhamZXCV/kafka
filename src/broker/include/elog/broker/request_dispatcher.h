@@ -13,16 +13,20 @@ namespace elog {
 // state of its own, and the handlers it calls are safe to call concurrently.
 class RequestDispatcher {
 public:
-    RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch);
+    RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch, ReplicaManager& replicas,
+                      BrokerId self);
 
     Frame dispatch(const Frame& request);
 
 private:
     Frame handleProduce(const Frame& request);
     Frame handleFetch(const Frame& request);
+    Frame handleLeaderAndIsr(const Frame& request);
 
     ProduceHandler& produce_;
     FetchHandler& fetch_;
+    ReplicaManager& replicas_;
+    const BrokerId self_;
 };
 
 }  // namespace elog

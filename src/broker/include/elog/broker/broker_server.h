@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elog/broker/broker_config.h"
+#include "elog/broker/coordinator_agent.h"
 #include "elog/broker/fetch_handler.h"
 #include "elog/broker/hw_notifier.h"
 #include "elog/broker/produce_handler.h"
@@ -32,6 +33,7 @@ private:
     ProduceHandler produceHandler_;
     FetchHandler fetchHandler_;
     RequestDispatcher dispatcher_;
+    CoordinatorAgent agent_;
     FrameServer server_;
 };
 

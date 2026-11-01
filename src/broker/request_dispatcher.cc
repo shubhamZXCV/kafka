@@ -2,13 +2,15 @@
 
 #include "elog/common/logging.h"
 #include "elog/protocol/error_response.h"
+#include "elog/protocol/json_codec.h"
 #include "elog/protocol/messages.h"
 #include "elog/protocol/msgpack_codec.h"
 
 namespace elog {
 
-RequestDispatcher::RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch)
-    : produce_(produce), fetch_(fetch) {}
+RequestDispatcher::RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch,
+                                     ReplicaManager& replicas, BrokerId self)
+    : produce_(produce), fetch_(fetch), replicas_(replicas), self_(self) {}
 
 Frame RequestDispatcher::dispatch(const Frame& request) {
     switch (request.apiKey) {
@@ -16,6 +18,8 @@ Frame RequestDispatcher::dispatch(const Frame& request) {
             return handleProduce(request);
         case ApiKey::Fetch:
             return handleFetch(request);
+        case ApiKey::LeaderAndIsr:
+            return handleLeaderAndIsr(request);
         default:
             break;
     }
@@ -44,6 +48,18 @@ Frame RequestDispatcher::handleFetch(const Frame& request) {
         return encodeErrorResponse(request, fetch.error());
     }
     return encode(fetch_.handle(fetch.value()), request.correlationId);
+}
+
+// LLD §6.3: only the coordinator sends this; each partition's epoch check fences pushes
+// that were delayed past a newer one.
+Frame RequestDispatcher::handleLeaderAndIsr(const Frame& request) {
+    auto leaderAndIsr = decodeLeaderAndIsrRequest(request);
+    if (!leaderAndIsr.ok()) {
+        logging::get("broker")->warn("bad_request api=LeaderAndIsr correlation={} error=\"{}\"",
+                                     request.correlationId, leaderAndIsr.message());
+        return encodeErrorResponse(request, leaderAndIsr.error());
+    }
+    return encode(replicas_.applyLeaderAndIsr(leaderAndIsr.value(), self_), request.correlationId);
 }
 
 }  // namespace elog

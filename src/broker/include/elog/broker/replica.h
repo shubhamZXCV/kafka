@@ -17,6 +17,7 @@
 #include "elog/broker/hw_notifier.h"
 #include "elog/common/result.h"
 #include "elog/common/types.h"
+#include "elog/protocol/messages.h"
 #include "elog/storage/partition_log.h"
 
 namespace elog {
@@ -76,8 +77,10 @@ public:
     Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log, std::ptrdiff_t maxPendingProduce,
             HwNotifier& hwNotifier);
 
-    // Called by the connection thread handling LeaderAndIsr (LLD §6.3, §11.3).
-    void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);
+    // Applies this partition's state from LeaderAndIsr (LLD §6.3, §11.3): an older epoch is
+    // FENCED_LEADER_EPOCH, the same epoch and role is a no-op, otherwise this replica
+    // becomes leader (if `self` leads) or follower.
+    ErrorCode applyLeaderAndIsr(const PartitionState& state, BrokerId self);
 
     // Waits up to `wait` for one of max.pending.produce slots (LLD §6.5). While none is free
     // the caller's connection thread blocks, so the producer feels TCP backpressure.
@@ -104,14 +107,17 @@ public:
     const TopicPartition& topicPartition() const { return tp_; }
 
 private:
-    Status checkLeaderEpoch(Epoch requestEpoch) const;  // requires mu_
-    void maybeAdvanceHw();                              // requires mu_
+    void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);  // requires mu_
+    void becomeFollower(Epoch epoch, BrokerId leader);                             // requires mu_
+    Status checkLeaderEpoch(Epoch requestEpoch) const;                             // requires mu_
+    void maybeAdvanceHw();                                                         // requires mu_
 
     const TopicPartition tp_;
     std::mutex mu_;
     std::condition_variable hwCv_;  // signalled on HW and role changes; waits hold mu_
     Role role_ = Role::FOLLOWER;
     Epoch leaderEpoch_ = 0;
+    BrokerId leaderId_ = -1;  // who leads at leaderEpoch_ (none yet)
     std::unique_ptr<PartitionLog> log_;
     // LLD §11.4: stored with release after the records below it are in the log; readers
     // load with acquire.

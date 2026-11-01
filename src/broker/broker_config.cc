@@ -1,5 +1,7 @@
 #include "elog/broker/broker_config.h"
 
+#include <unistd.h>
+
 #include "elog/broker/replica.h"
 
 namespace elog {
@@ -15,6 +17,9 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::requiredInteger("broker.id", 0, INT32_MAX),
         ConfigKey::string("listen.host", "0.0.0.0"),
         ConfigKey::integer("listen.port", 9101, 1, 65535),
+        ConfigKey::string("advertised.host", ""),
+        ConfigKey::string("coordinator.address", "coordinator:9000"),
+        ConfigKey::integer("broker.heartbeat.interval.ms", 2000, 100, 60'000),
         ConfigKey::string("data.dir", "./data"),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
@@ -34,6 +39,13 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.listenHost = config.getString("listen.host");
     cfg.listenPort = static_cast<std::uint16_t>(config.getInt("listen.port"));
     cfg.dataDir = config.getString("data.dir");
+    cfg.advertisedHost = config.getString("advertised.host");
+    if (cfg.advertisedHost.empty()) {  // LLD §12.1: defaults to this machine's hostname
+        char name[256] = {};
+        cfg.advertisedHost = ::gethostname(name, sizeof(name) - 1) == 0 ? name : "localhost";
+    }
+    cfg.coordinatorAddress = config.getString("coordinator.address");
+    cfg.brokerHeartbeatInterval = config.getMs("broker.heartbeat.interval.ms");
     cfg.maxFrameBytes = static_cast<std::size_t>(config.getInt("max.frame.bytes"));
     cfg.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.connectionIdle = config.getMs("connection.idle.ms");

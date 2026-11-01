@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "elog/common/logging.h"
+#include "elog/protocol/error_codes.h"
 #include "elog/storage/partition_log.h"
 
 namespace elog {
@@ -46,6 +47,26 @@ Result<std::shared_ptr<Replica>> ReplicaManager::getOrCreate(const TopicPartitio
     logging::get("broker")->info("replica_created topic={} partition={} dir={}", tp.topic,
                                  tp.partition, dir);
     return replica;
+}
+
+LeaderAndIsrResponse ReplicaManager::applyLeaderAndIsr(const LeaderAndIsrRequest& request,
+                                                       BrokerId self) {
+    LeaderAndIsrResponse response;
+    for (const PartitionState& state : request.partitions) {
+        PartitionError result{state.topic, state.partition, ErrorCode::NONE};
+        auto replica = getOrCreate({state.topic, state.partition});
+        result.error =
+            replica.ok() ? replica.value()->applyLeaderAndIsr(state, self) : replica.error();
+        if (result.error != ErrorCode::NONE) {
+            logging::get("broker")->warn(
+                "leader_and_isr_rejected topic={} partition={} epoch={} error={}", state.topic,
+                state.partition, state.leaderEpoch, errorName(result.error));
+        }
+        response.partitions.push_back(std::move(result));
+    }
+    logging::get("broker")->info("leader_and_isr_applied controller={} partitions={}",
+                                 request.controllerIncarnation, request.partitions.size());
+    return response;
 }
 
 std::vector<std::shared_ptr<Replica>> ReplicaManager::all() const {

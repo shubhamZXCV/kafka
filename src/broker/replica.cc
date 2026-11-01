@@ -52,8 +52,26 @@ Replica::Replica(TopicPartition tp, std::unique_ptr<PartitionLog> log,
       pendingSlots_(maxPendingProduce),
       hwNotifier_(hwNotifier) {}
 
-void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr) {
+ErrorCode Replica::applyLeaderAndIsr(const PartitionState& state, BrokerId self) {
     std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (state.leaderEpoch < leaderEpoch_) {
+        return ErrorCode::FENCED_LEADER_EPOCH;  // a delayed push from before a failover
+    }
+    const Role role = state.leader == self ? Role::LEADER : Role::FOLLOWER;
+    if (state.leaderEpoch == leaderEpoch_ && role == role_ && state.leader == leaderId_) {
+        return ErrorCode::NONE;  // idempotent: pushes may be retried
+    }
+    if (role == Role::LEADER) {
+        becomeLeader(state.leaderEpoch, {state.isr.begin(), state.isr.end()},
+                     static_cast<std::uint16_t>(state.minIsr));
+    } else {
+        becomeFollower(state.leaderEpoch, state.leader);
+    }
+    leaderId_ = state.leader;
+    return ErrorCode::NONE;
+}
+
+void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr) {
     leaderEpoch_ = epoch;
     role_ = Role::LEADER;
     leader_ = LeaderState{std::move(isr), minIsr};
@@ -62,6 +80,18 @@ void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t mi
     hwNotifier_.bump();  // and long-polling fetches re-check the role
     logging::get("broker")->info("became_leader topic={} partition={} epoch={} leo={}", tp_.topic,
                                  tp_.partition, epoch, log_->leo());
+}
+
+// LLD §6.3, leader-only for now: a follower serves nothing (produce and fetch get
+// NOT_LEADER); fetching from the leader comes with replication.
+void Replica::becomeFollower(Epoch epoch, BrokerId leader) {
+    leaderEpoch_ = epoch;
+    role_ = Role::FOLLOWER;
+    leader_.reset();
+    hwCv_.notify_all();  // produces parked under the old role fail with NOT_LEADER
+    hwNotifier_.bump();
+    logging::get("broker")->info("became_follower topic={} partition={} epoch={} leader={}",
+                                 tp_.topic, tp_.partition, epoch, leader);
 }
 
 std::optional<Replica::ProduceSlot> Replica::tryAdmitProduce(std::chrono::milliseconds wait) {

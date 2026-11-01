@@ -33,6 +33,10 @@ public:
 
     std::vector<std::shared_ptr<Replica>> all() const;
 
+    // Applies a LeaderAndIsr from the coordinator to every partition it names, opening logs
+    // for new ones (LLD §6.3). `self` is this broker's ID.
+    LeaderAndIsrResponse applyLeaderAndIsr(const LeaderAndIsrRequest& request, BrokerId self);
+
 private:
     const std::string dataDir_;
     const std::ptrdiff_t maxPendingProduce_;  // admission slots per new replica
