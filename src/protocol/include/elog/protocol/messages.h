@@ -91,6 +91,7 @@ struct PartitionState {
     Epoch leaderEpoch = 0;
     std::vector<BrokerId> isr;
     std::vector<BrokerId> replicas;
+    std::uint32_t minIsr = 1;  // R-12: below this ISR size the leader refuses produces
 };
 
 struct LeaderAndIsrRequest {

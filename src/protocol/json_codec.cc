@@ -48,7 +48,8 @@ json toJson(const PartitionMetadata& p) {
 json toJson(const PartitionState& p) {
     return {{"topic", p.topic},   {"partition", p.partition},
             {"leader", p.leader}, {"leaderEpoch", p.leaderEpoch},
-            {"isr", p.isr},       {"replicas", p.replicas}};
+            {"isr", p.isr},       {"replicas", p.replicas},
+            {"minIsr", p.minIsr}};
 }
 
 json toJson(const PartitionError& p) {
@@ -330,7 +331,8 @@ Result<LeaderAndIsrRequest> decodeLeaderAndIsrRequest(const Frame& frame) {
             request.partitions.push_back(
                 {stringField(p, "topic"), intField<std::uint32_t>(p, "partition"),
                  intField<BrokerId>(p, "leader"), intField<Epoch>(p, "leaderEpoch"),
-                 brokerIdsField(p, "isr"), brokerIdsField(p, "replicas")});
+                 brokerIdsField(p, "isr"), brokerIdsField(p, "replicas"),
+                 intField<std::uint32_t>(p, "minIsr")});
         }
         request.brokers = brokersField(j);
         return request;
