@@ -25,9 +25,9 @@ def describe_topic(cluster, name):
     return json.loads(elogctl(cluster, "describe-topic", name).stdout)
 
 
-def dump(cluster, topic, partition):
-    """Every committed record of one partition: dicts with offset, key, pid, seq."""
-    out = elogctl(cluster, "dump", topic, partition, timeout=300).stdout
+def dump(cluster, topic, partition, start=0):
+    """Committed records of one partition from `start`: dicts with offset, key, pid, seq."""
+    out = elogctl(cluster, "dump", topic, partition, "--from", start, timeout=300).stdout
     return [json.loads(line) for line in out.splitlines()]
 
 

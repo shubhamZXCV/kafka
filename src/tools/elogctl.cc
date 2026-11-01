@@ -3,7 +3,7 @@
 //
 //     elogctl --coordinator HOST:PORT create-topic <name> -p P -r R [--min-isr N]
 //     elogctl --coordinator HOST:PORT describe-topic <name>
-//     elogctl --coordinator HOST:PORT dump <topic> <partition>
+//     elogctl --coordinator HOST:PORT dump <topic> <partition> [--from N]
 //     elogctl --coordinator HOST:PORT health [--brokers N] [--timeout-ms T]
 
 #include <chrono>
@@ -163,8 +163,12 @@ int dump(RpcConnection& coordinator, const tools::Args& args) {
     if (!start.ok() || start.value().error != ErrorCode::NONE) {
         return fail("cannot read the high watermark");
     }
+    const auto from = args.getInt("--from");
+    if (!from.ok() || from.value() < 0) {
+        return fail("--from must be an offset", 2);
+    }
     const Offset end = start.value().highWatermark;  // R-18: up to the HW at start
-    for (Offset next = 0; next < end;) {
+    for (auto next = static_cast<Offset>(from.value()); next < end;) {
         auto f = fetch(*leader, p, pos[1], next, 10'000);
         if (!f.ok() || f.value().error != ErrorCode::NONE) {
             return fail("fetch failed at offset " + std::to_string(next));
@@ -209,7 +213,8 @@ int main(int argc, char** argv) {
                                   {"-r", "0"},
                                   {"--min-isr", "1"},
                                   {"--brokers", "1"},
-                                  {"--timeout-ms", "0"}});
+                                  {"--timeout-ms", "0"},
+                                  {"--from", "0"}});
     if (!args.ok()) {
         return fail(args.message(), 2);
     }
