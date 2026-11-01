@@ -9,7 +9,9 @@
 
 namespace elog {
 
-EventLoop::EventLoop(std::chrono::milliseconds tick, Repository& repo) : tick_(tick), meta_(repo) {}
+EventLoop::EventLoop(std::chrono::milliseconds tick, std::chrono::milliseconds brokerSessionTimeout,
+                     Repository& repo)
+    : tick_(tick), meta_(repo), brokers_(repo, brokerSessionTimeout) {}
 
 Status EventLoop::load() {
     return meta_.load();
@@ -50,12 +52,15 @@ void EventLoop::handle(RequestEvent& event) {
 }
 
 Frame EventLoop::dispatch(const Frame& request) {
-    const std::vector<BrokerAddress> liveBrokers;  // broker registration comes next
     switch (request.apiKey) {
         case ApiKey::Metadata:
-            return meta_.onMetadata(request, liveBrokers);
+            return meta_.onMetadata(request, brokers_.liveBrokers());
         case ApiKey::CreateTopic:
-            return meta_.onCreateTopic(request, liveBrokers);
+            return meta_.onCreateTopic(request, brokers_.liveBrokers());
+        case ApiKey::RegisterBroker:
+            return brokers_.onRegister(request, time::monotonicMs());
+        case ApiKey::BrokerHeartbeat:
+            return brokers_.onHeartbeat(request, time::monotonicMs());
         default:
             break;
     }
@@ -65,7 +70,9 @@ Frame EventLoop::dispatch(const Frame& request) {
     return encodeErrorResponse(request, ErrorCode::INVALID_REQUEST);
 }
 
-// Broker liveness and group session timeouts are checked here as they land.
-void EventLoop::onTick(TimeMs) {}
+// LLD §7.2. Leader election for dead brokers and group session timeouts hook in here.
+void EventLoop::onTick(TimeMs now) {
+    brokers_.onTick(now);
+}
 
 }  // namespace elog

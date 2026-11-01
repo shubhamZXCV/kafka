@@ -43,6 +43,9 @@ public:
 
     Result<std::vector<TopicRecord>> loadTopics();
 
+    // Inserts or updates the broker row and returns its new incarnation (LLD §8.4).
+    Result<std::uint32_t> registerBroker(BrokerId id, const std::string& host, std::uint16_t port);
+
 private:
     explicit Repository(std::unique_ptr<Db> db) : db_(std::move(db)) {}
     Status loadPartitions(TopicRecord& topic);

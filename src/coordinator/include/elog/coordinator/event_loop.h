@@ -5,6 +5,7 @@
 
 #include "elog/common/bounded_queue.h"
 #include "elog/common/types.h"
+#include "elog/coordinator/broker_liveness.h"
 #include "elog/coordinator/metadata_manager.h"
 #include "elog/coordinator/reply_slot.h"
 #include "elog/coordinator/repository.h"
@@ -25,7 +26,8 @@ struct RequestEvent {
 // Thread rules: run() is the event-loop thread; nothing else calls into this class.
 class EventLoop {
 public:
-    EventLoop(std::chrono::milliseconds tick, Repository& repo);
+    EventLoop(std::chrono::milliseconds tick, std::chrono::milliseconds brokerSessionTimeout,
+              Repository& repo);
 
     // Loads persisted state (LLD §7.6). Called before run().
     Status load();
@@ -40,6 +42,7 @@ private:
 
     const std::chrono::milliseconds tick_;
     MetadataManager meta_;
+    BrokerLiveness brokers_;
 };
 
 }  // namespace elog

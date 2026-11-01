@@ -16,6 +16,7 @@ std::vector<ConfigKey> coordinatorConfigSchema() {
         ConfigKey::integer("coordinator.tick.ms", 100, 10, 1000),
         ConfigKey::integer("inbound.queue.capacity", 10'000, 1, 1'000'000),
         ConfigKey::integer("queue.admission.ms", 1000, 0, 60'000),
+        ConfigKey::integer("broker.session.timeout.ms", 6000, 100, 600'000),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -35,6 +36,7 @@ CoordinatorConfig CoordinatorConfig::from(const Config& config) {
     cfg.tick = config.getMs("coordinator.tick.ms");
     cfg.inboundQueueCapacity = static_cast<std::size_t>(config.getInt("inbound.queue.capacity"));
     cfg.queueAdmission = config.getMs("queue.admission.ms");
+    cfg.brokerSessionTimeout = config.getMs("broker.session.timeout.ms");
     return cfg;
 }
 

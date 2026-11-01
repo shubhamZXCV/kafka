@@ -2,6 +2,7 @@ add_library(elog_coordinator_lib STATIC
     coordinator_config.cc
     coordinator_server.cc
     db.cc
+    broker_liveness.cc
     event_loop.cc
     metadata_manager.cc
     repository.cc

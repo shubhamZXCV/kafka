@@ -22,7 +22,7 @@ int CoordinatorServer::run() {
             ->error("db_open_failed path={} error=\"{}\"", cfg_.dbPath, repo.message());
         return 1;
     }
-    EventLoop loop(cfg_.tick, *repo.value());
+    EventLoop loop(cfg_.tick, cfg_.brokerSessionTimeout, *repo.value());
     if (auto status = loop.load(); !status.ok()) {
         logging::get("coordinator")->error("load_failed error=\"{}\"", status.message());
         return 1;

@@ -21,7 +21,8 @@ struct CoordinatorConfig {
     std::string dbPath;
     std::chrono::milliseconds tick{0};  // event-loop tick period
     std::size_t inboundQueueCapacity = 0;
-    std::chrono::milliseconds queueAdmission{0};  // wait for queue space, then THROTTLED
+    std::chrono::milliseconds queueAdmission{0};        // wait for queue space, then THROTTLED
+    std::chrono::milliseconds brokerSessionTimeout{0};  // no heartbeat this long: dead
 
     // `config` must have been loaded with coordinatorConfigSchema().
     static CoordinatorConfig from(const Config& config);

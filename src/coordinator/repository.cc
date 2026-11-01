@@ -109,6 +109,30 @@ Status Repository::createTopic(const TopicRecord& topic) {
     return txn.value().commit();
 }
 
+Result<std::uint32_t> Repository::registerBroker(BrokerId id, const std::string& host,
+                                                 std::uint16_t port) {
+    auto stmt = db_->prepare(
+        "INSERT INTO broker (broker_id, host, port, incarnation) VALUES (:id, :h, :port, 1) "
+        "ON CONFLICT (broker_id) DO UPDATE SET host = excluded.host, port = excluded.port, "
+        "incarnation = broker.incarnation + 1 RETURNING incarnation");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    Stmt& s = *stmt.value();
+    s.bind(":id", std::int64_t{id});
+    s.bind(":h", host);
+    s.bind(":port", std::int64_t{port});
+    auto row = s.step();
+    if (!row.ok()) {
+        return {row.error(), row.message()};
+    }
+    const auto incarnation = static_cast<std::uint32_t>(s.columnInt(0));
+    if (auto status = stepToEnd(s); !status.ok()) {  // finishes the statement: commits the row
+        return {status.error(), status.message()};
+    }
+    return incarnation;
+}
+
 Result<std::vector<TopicRecord>> Repository::loadTopics() {
     auto stmt = db_->prepare(
         "SELECT name, partitions, replication_factor, min_isr FROM topic ORDER BY name");
