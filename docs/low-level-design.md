@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.7 |
+| Version | 1.8 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -23,6 +23,7 @@
 | 1.5 | 2026-11-01 | R-12: `LeaderAndIsr` carries `minIsr` (§4.6, §6.1, §6.3); broker `produce.throttle.hint.ms` (§6.5, §12.1). |
 | 1.6 | 2026-11-01 | R-13: coordinator connection keys (§12.2); the event loop generates its own ticks (§7.1, §7.2). |
 | 1.7 | 2026-11-01 | R-14: `CreateTopic` validation and errors; offline leader is `-1` (§4.6, §7.5). |
+| 1.8 | 2026-11-01 | R-15: broker heartbeat errors, `LeaderAndIsr` push triggers and retries, `controllerIncarnation` (§4.6, §7.5). |
 
 ---
 
@@ -1480,6 +1481,10 @@ def MetadataManager.electLeaders(dead):
     return updates
 ```
 
+**Heartbeats (R-15):** a `BrokerHeartbeat` from an unknown broker, a broker marked dead, or with an incarnation other than the current one gets `STALE_BROKER_INCARNATION`; the broker then re-registers (§6.9).
+
+**Pushes (R-15):** the coordinator sends `LeaderAndIsr` (1) to a broker when it registers, with every partition it hosts, and (2) to every replica of a new topic after `CreateTopic` commits, with that broker's new partitions. `brokers` lists every live broker. A failed delivery comes back as `PushResultEvent`; about 500 ms later, if the broker is still alive with the same incarnation, it is sent that broker's *current* full state again (never the stale request). `controllerIncarnation` is the coordinator's start time in seconds; it is informational, since brokers fence on each partition's `leaderEpoch`.
+
 **AlterIsr handling:** reject with `FENCED_LEADER_EPOCH` if `req.leaderEpoch ≠ p.leaderEpoch` or if the sender is not the current leader. Otherwise persist `newIsr` and reply with it. `newIsr` MUST contain the leader.
 
 **Initial placement (`CreateTopic`):** with live brokers sorted by ID as `B[0..n)`, `replicas(p) = [B[(p + i) mod n] for i in 0..R)`, the leader is `replicas[0]`, and `leaderEpoch = 0`. Requires `n ≥ R`.
@@ -2317,7 +2322,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-14 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-15 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2335,6 +2340,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-12 | §12.2 / §16 config | Not specified | `LeaderAndIsr` partition state gains **`minIsr`** (from `CreateTopic`), stored in `LeaderState` by `becomeLeader`. Broker gains **`produce.throttle.hint.ms`** (100), the `throttleMs` returned with `THROTTLED`. | §6.5 checks `leader_.minIsr`, but only the coordinator knew it. §6.5 used `cfg.throttleHintMs`, which §12.1 lacked. |
 | R-13 | §7 coordinator | Ticker thread; coordinator connection settings not specified | The **event loop generates ticks itself** (waits on the queue only until the next tick, checks the deadline after each event), replacing the Ticker thread and its reserved queue slot. The coordinator gains the broker's **`max.frame.bytes`, `max.connections`, `connection.idle.ms`, `request.timeout.ms`** keys with the same defaults. | Same guarantee (ticks never wait behind a full queue) with one thread fewer and no special queue slot. Both servers share one connection server (`FrameServer`), which needs these limits. |
 | R-14 | §12.2 `CreateTopic` | Only the partition-count mismatch specified | Name, partition count and `minIsr` are validated (`INVALID_REQUEST`); a spec differing only in `replicationFactor`/`minIsr` is `INVALID_REQUEST`; too few live brokers is `NOT_ENOUGH_REPLICAS`; an offline leader is reported as `-1`. | The topic name becomes a directory on every broker, so it must not contain `/` or be `..`. Each case needs a defined reply. |
+| R-15 | §7.5 liveness, pushes | Heartbeat errors, push triggers and retry policy, `controllerIncarnation` not specified | Bad heartbeats get `STALE_BROKER_INCARNATION`; `LeaderAndIsr` is pushed on registration and after `CreateTopic`; a failed push is retried after ~500 ms with the broker's current state while it stays alive; `controllerIncarnation` is the coordinator start time (s), informational. | A dead broker must re-register before it serves again; resending current state (not the failed request) can never deliver stale roles; per-partition epochs already fence. |
 
 ---
 
