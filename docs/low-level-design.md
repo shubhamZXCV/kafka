@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.6 |
+| Version | 1.7 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -22,6 +22,7 @@
 | 1.4 | 2026-11-01 | R-11: `ReplicaManager::createMu_` serialises log creation, so `mapMu_` is never held across a log open (§6.1, §6.3, §11.1, §11.2). |
 | 1.5 | 2026-11-01 | R-12: `LeaderAndIsr` carries `minIsr` (§4.6, §6.1, §6.3); broker `produce.throttle.hint.ms` (§6.5, §12.1). |
 | 1.6 | 2026-11-01 | R-13: coordinator connection keys (§12.2); the event loop generates its own ticks (§7.1, §7.2). |
+| 1.7 | 2026-11-01 | R-14: `CreateTopic` validation and errors; offline leader is `-1` (§4.6, §7.5). |
 
 ---
 
@@ -449,6 +450,8 @@ Control-plane messages are JSON objects. Data-plane messages are MessagePack map
 { "name": "orders", "partitions": 12, "replicationFactor": 3, "minIsr": 2 }
 → { "error": 0 }        // idempotent: same spec → NONE; different partitions → INVALID_PARTITION_COUNT
 ```
+
+Validation (R-14): `name` is 1–249 characters of `[A-Za-z0-9._-]` and not `.` or `..` (it names a directory on every broker); `1 ≤ partitions ≤ 10 000`; `1 ≤ minIsr ≤ replicationFactor`. Otherwise `INVALID_REQUEST`. An existing topic with the same partition count but a different `replicationFactor` or `minIsr` is also `INVALID_REQUEST`. Fewer live brokers than `replicationFactor` gives `NOT_ENOUGH_REPLICAS` (retriable: brokers may still be registering). In `Metadata`, a partition with no leader has `"leader": -1`.
 
 #### RegisterBroker (3) / BrokerHeartbeat (4)
 
@@ -2314,7 +2317,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-13 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-14 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2331,6 +2334,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-11 | §11 locking | Not specified | `ReplicaManager` gains **`createMu_`**, held by `getOrCreate` while it opens a new partition's log; `mapMu_` is taken only to look up or insert. Lock order: `createMu_ → mapMu_ → Replica::mu_`. | Opening a log does disk I/O (and recovery, §5.6), and two concurrent opens of one directory collide. Holding `mapMu_` would stall every produce and fetch lookup during it. |
 | R-12 | §12.2 / §16 config | Not specified | `LeaderAndIsr` partition state gains **`minIsr`** (from `CreateTopic`), stored in `LeaderState` by `becomeLeader`. Broker gains **`produce.throttle.hint.ms`** (100), the `throttleMs` returned with `THROTTLED`. | §6.5 checks `leader_.minIsr`, but only the coordinator knew it. §6.5 used `cfg.throttleHintMs`, which §12.1 lacked. |
 | R-13 | §7 coordinator | Ticker thread; coordinator connection settings not specified | The **event loop generates ticks itself** (waits on the queue only until the next tick, checks the deadline after each event), replacing the Ticker thread and its reserved queue slot. The coordinator gains the broker's **`max.frame.bytes`, `max.connections`, `connection.idle.ms`, `request.timeout.ms`** keys with the same defaults. | Same guarantee (ticks never wait behind a full queue) with one thread fewer and no special queue slot. Both servers share one connection server (`FrameServer`), which needs these limits. |
+| R-14 | §12.2 `CreateTopic` | Only the partition-count mismatch specified | Name, partition count and `minIsr` are validated (`INVALID_REQUEST`); a spec differing only in `replicationFactor`/`minIsr` is `INVALID_REQUEST`; too few live brokers is `NOT_ENOUGH_REPLICAS`; an offline leader is reported as `-1`. | The topic name becomes a directory on every broker, so it must not contain `/` or be `..`. Each case needs a defined reply. |
 
 ---
 
