@@ -1,12 +1,23 @@
 #include "elog/storage/partition_log.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
 #include <filesystem>
+#include <system_error>
 
 #include "elog/common/time.h"
 #include "elog/protocol/record_batch.h"
 
 namespace elog {
+
+namespace {
+
+constexpr std::size_t kMaxSegmentsSyncedOneByOne = 4;
+
+}  // namespace
 
 PartitionLog::PartitionLog(std::string dir, LogConfig cfg, std::shared_ptr<Segment> first)
     : dir_(std::move(dir)), cfg_(cfg) {
@@ -92,22 +103,46 @@ Status PartitionLog::roll() {
 Status PartitionLog::flush() {
     const Offset leo = this->leo();  // what this flush covers
     const Offset from = recoveryPoint();
+    std::vector<std::shared_ptr<Segment>> dirty;
     const auto segments = snapshot();
     for (std::size_t i = 0; i < segments.size(); ++i) {
         // Segment i holds offsets [base_i, base_i+1): it has nothing unflushed if the next
         // segment already starts at or below the recovery point.
-        if (i + 1 < segments.size() && segments[i + 1]->baseOffset() <= from) {
-            continue;
+        if (i + 1 == segments.size() || segments[i + 1]->baseOffset() > from) {
+            dirty.push_back(segments[i]);
         }
-        if (auto status = segments[i]->flush(); !status.ok()) {
-            return status;
-        }
-        if (auto status = segments[i]->index().flush(); !status.ok()) {
-            return status;
-        }
+    }
+    if (auto status = syncSegments(dirty); !status.ok()) {
+        return status;
     }
     // LLD §5.8: advance only after every sync succeeded.
     recoveryPoint_.store(std::max(from, leo), std::memory_order_release);
+    return okStatus();
+}
+
+// One fdatasync per file costs a journal commit each; after a burst with small segments
+// that is hundreds of commits. syncfs() makes every dirty file of the filesystem durable in
+// one, so it is used once more than a few segments are dirty.
+Status PartitionLog::syncSegments(const std::vector<std::shared_ptr<Segment>>& dirty) const {
+    if (dirty.size() > kMaxSegmentsSyncedOneByOne) {
+        const int fd = ::open(dir_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        const int rc = fd < 0 ? -1 : ::syncfs(fd);
+        const int err = errno;
+        if (fd >= 0) {
+            ::close(fd);
+        }
+        return rc == 0 ? okStatus()
+                       : Status{ErrorCode::UNKNOWN_SERVER_ERROR,
+                                "syncfs " + dir_ + ": " + std::system_category().message(err)};
+    }
+    for (const auto& segment : dirty) {
+        if (auto status = segment->flush(); !status.ok()) {
+            return status;
+        }
+        if (auto status = segment->index().flush(); !status.ok()) {
+            return status;
+        }
+    }
     return okStatus();
 }
 

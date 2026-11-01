@@ -82,6 +82,7 @@ private:
     bool shouldRoll(const Segment& active, std::size_t batchBytes) const;
     Status roll();  // requires the append caller's exclusivity
     std::vector<std::shared_ptr<Segment>> snapshot() const;
+    Status syncSegments(const std::vector<std::shared_ptr<Segment>>& dirty) const;
 
     const std::string dir_;
     const LogConfig cfg_;
