@@ -2,6 +2,7 @@ add_library(elog_coordinator_lib STATIC
     coordinator_config.cc
     coordinator_server.cc
     db.cc
+    event_loop.cc
     schema.cc)
 
 target_include_directories(elog_coordinator_lib PUBLIC include)

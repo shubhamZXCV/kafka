@@ -80,6 +80,11 @@ public:
         notEmpty_.notify_all();
     }
 
+    bool closed() const {
+        std::lock_guard lock(mu_);
+        return closed_;
+    }
+
 private:
     mutable std::mutex mu_;
     std::condition_variable notFull_;   // signalled when a slot frees up

@@ -12,6 +12,9 @@ std::vector<ConfigKey> coordinatorConfigSchema() {
     return {
         ConfigKey::string("listen.host", "0.0.0.0"),
         ConfigKey::integer("listen.port", 9000, 1, 65535),
+        ConfigKey::integer("coordinator.tick.ms", 100, 10, 1000),
+        ConfigKey::integer("inbound.queue.capacity", 10'000, 1, 1'000'000),
+        ConfigKey::integer("queue.admission.ms", 1000, 0, 60'000),
         ConfigKey::integer("max.frame.bytes", 8'388'608, 1024, 1 << 30),
         ConfigKey::integer("max.connections", 256, 1, 65535),
         ConfigKey::integer("connection.idle.ms", 300'000, 1, kOneDayMs),
@@ -27,6 +30,9 @@ CoordinatorConfig CoordinatorConfig::from(const Config& config) {
     cfg.server.maxConnections = static_cast<int>(config.getInt("max.connections"));
     cfg.server.connectionIdle = config.getMs("connection.idle.ms");
     cfg.server.requestTimeout = config.getMs("request.timeout.ms");
+    cfg.tick = config.getMs("coordinator.tick.ms");
+    cfg.inboundQueueCapacity = static_cast<std::size_t>(config.getInt("inbound.queue.capacity"));
+    cfg.queueAdmission = config.getMs("queue.admission.ms");
     return cfg;
 }
 
