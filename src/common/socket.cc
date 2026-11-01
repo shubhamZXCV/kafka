@@ -212,6 +212,12 @@ Listener::~Listener() {
     }
 }
 
+void Listener::shutdown() noexcept {
+    if (fd_ >= 0) {
+        ::shutdown(fd_, SHUT_RDWR);
+    }
+}
+
 Result<Socket> Listener::accept() {
     while (true) {
         const int fd = ::accept4(fd_, nullptr, nullptr, SOCK_CLOEXEC);

@@ -2,10 +2,14 @@
 //
 //     elog-broker --set broker.id=1 [--config broker.properties] [--set key=value ...]
 
+#include <pthread.h>
+#include <signal.h>
+
 #include <cstdio>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "elog/broker/broker_config.h"
@@ -96,6 +100,28 @@ int main(int argc, char** argv) {
     }
     elog::logging::get("broker")->info("starting version={}{}", elog::versionString(), settings);
 
+    // SIGINT and SIGTERM are blocked in every thread (threads inherit the mask) and taken by
+    // one waiting thread, so shutdown() runs as ordinary code, not in a signal handler.
+    // SIGUSR1 only wakes that thread if run() returns on its own.
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGTERM);
+    sigaddset(&signals, SIGUSR1);
+    pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+
     elog::BrokerServer server(cfg);
-    return server.run();
+    std::thread signalWaiter([&] {
+        int signal = 0;
+        sigwait(&signals, &signal);
+        if (signal != SIGUSR1) {
+            elog::logging::get("broker")->info("shutdown_requested signal={}",
+                                               sigabbrev_np(signal));
+            server.shutdown();
+        }
+    });
+    const int exitCode = server.run();
+    pthread_kill(signalWaiter.native_handle(), SIGUSR1);
+    signalWaiter.join();
+    return exitCode;
 }

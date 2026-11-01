@@ -58,6 +58,9 @@ public:
     // Blocks until a client connects.
     Result<Socket> accept();
 
+    // Wakes a thread blocked in accept(), which then fails; safe from any thread.
+    void shutdown() noexcept;
+
 private:
     explicit Listener(int fd) : fd_(fd) {}
 
