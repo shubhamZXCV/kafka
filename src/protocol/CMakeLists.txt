@@ -1,5 +1,6 @@
 add_library(elog_protocol STATIC
     api_keys.cc
+    app_value.cc
     error_codes.cc
     error_response.cc
     frame.cc
