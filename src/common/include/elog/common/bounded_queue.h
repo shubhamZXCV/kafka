@@ -80,6 +80,15 @@ public:
         notEmpty_.notify_all();
     }
 
+    // Waits up to `timeout` until at least `slots` slots are free (or the queue is empty or
+    // closed).
+    void waitFreeSlots(std::size_t slots, std::chrono::milliseconds timeout) {
+        std::unique_lock lock(mu_);
+        notFull_.wait_for(lock, timeout, [&] {
+            return closed_ || items_.empty() || capacity_ - items_.size() >= slots;
+        });
+    }
+
     bool closed() const {
         std::lock_guard lock(mu_);
         return closed_;

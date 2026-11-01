@@ -1,4 +1,6 @@
 add_library(elog_client STATIC
+    consumer.cc
+    fetcher.cc
     metadata_cache.cc
     producer.cc
     rpc_connection.cc)
