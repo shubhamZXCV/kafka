@@ -1,0 +1,3 @@
+# Vendored code is kept byte-for-byte as published.
+src/common/murmur3.cc
+src/common/MurmurHash3.h

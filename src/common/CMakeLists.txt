@@ -4,6 +4,7 @@ add_library(elog_common STATIC
     events.cc
     logging.cc
     metrics.cc
+    murmur3.cc
     socket.cc
     version.cc)
 
@@ -13,3 +14,7 @@ target_link_libraries(elog_common
     PRIVATE crc32c)
 elog_set_warnings(elog_common)
 target_compile_definitions(elog_common PRIVATE ELOG_VERSION="${PROJECT_VERSION}")
+
+# Vendored MurmurHash3 is kept unchanged, so its warnings (e.g. implicit fallthrough) are
+# not ours to fix.
+set_source_files_properties(murmur3.cc PROPERTIES COMPILE_OPTIONS "-w")
