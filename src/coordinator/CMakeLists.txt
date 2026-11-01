@@ -3,6 +3,7 @@ add_library(elog_coordinator_lib STATIC
     coordinator_server.cc
     db.cc
     event_loop.cc
+    metadata_manager.cc
     repository.cc
     schema.cc)
 

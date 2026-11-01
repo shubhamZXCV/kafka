@@ -29,7 +29,6 @@ private:
 
     const CoordinatorConfig cfg_;
     BoundedQueue<RequestEvent> inbound_;
-    EventLoop loop_;
     FrameServer server_;
 };
 

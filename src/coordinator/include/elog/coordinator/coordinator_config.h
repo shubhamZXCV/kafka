@@ -17,7 +17,8 @@ std::vector<ConfigKey> coordinatorConfigSchema();
 
 // The coordinator settings, typed. Built once at startup; immutable afterwards.
 struct CoordinatorConfig {
-    FrameServerConfig server;           // listen address and connection limits
+    FrameServerConfig server;  // listen address and connection limits
+    std::string dbPath;
     std::chrono::milliseconds tick{0};  // event-loop tick period
     std::size_t inboundQueueCapacity = 0;
     std::chrono::milliseconds queueAdmission{0};  // wait for queue space, then THROTTLED

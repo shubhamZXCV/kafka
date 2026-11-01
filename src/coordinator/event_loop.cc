@@ -9,7 +9,11 @@
 
 namespace elog {
 
-EventLoop::EventLoop(std::chrono::milliseconds tick) : tick_(tick) {}
+EventLoop::EventLoop(std::chrono::milliseconds tick, Repository& repo) : tick_(tick), meta_(repo) {}
+
+Status EventLoop::load() {
+    return meta_.load();
+}
 
 // R-13: wait for a request only until the next tick is due, and check the tick deadline
 // after every request, so ticks never wait behind a full queue.
@@ -46,7 +50,15 @@ void EventLoop::handle(RequestEvent& event) {
 }
 
 Frame EventLoop::dispatch(const Frame& request) {
-    // No handlers yet: every API key is unhandled for now (R-10).
+    const std::vector<BrokerAddress> liveBrokers;  // broker registration comes next
+    switch (request.apiKey) {
+        case ApiKey::Metadata:
+            return meta_.onMetadata(request, liveBrokers);
+        case ApiKey::CreateTopic:
+            return meta_.onCreateTopic(request, liveBrokers);
+        default:
+            break;
+    }
     logging::get("coordinator")
         ->warn("unhandled_request api={} correlation={}", apiKeyName(request.apiKey),
                request.correlationId);

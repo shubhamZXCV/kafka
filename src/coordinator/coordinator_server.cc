@@ -12,12 +12,22 @@ namespace elog {
 CoordinatorServer::CoordinatorServer(CoordinatorConfig cfg)
     : cfg_(std::move(cfg)),
       inbound_(cfg_.inboundQueueCapacity),
-      loop_(cfg_.tick),
       server_(
           cfg_.server, [this](const Frame& request) { return handle(request); }, "coordinator") {}
 
 int CoordinatorServer::run() {
-    std::thread loopThread([this] { loop_.run(inbound_); });
+    auto repo = Repository::open(cfg_.dbPath);
+    if (!repo.ok()) {
+        logging::get("coordinator")
+            ->error("db_open_failed path={} error=\"{}\"", cfg_.dbPath, repo.message());
+        return 1;
+    }
+    EventLoop loop(cfg_.tick, *repo.value());
+    if (auto status = loop.load(); !status.ok()) {
+        logging::get("coordinator")->error("load_failed error=\"{}\"", status.message());
+        return 1;
+    }
+    std::thread loopThread([&] { loop.run(inbound_); });
     const int exitCode = server_.run();
     // Every connection thread has been joined, so nothing waits on the loop any more.
     inbound_.close();

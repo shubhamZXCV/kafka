@@ -5,7 +5,9 @@
 
 #include "elog/common/bounded_queue.h"
 #include "elog/common/types.h"
+#include "elog/coordinator/metadata_manager.h"
 #include "elog/coordinator/reply_slot.h"
+#include "elog/coordinator/repository.h"
 #include "elog/protocol/frame.h"
 
 namespace elog {
@@ -23,7 +25,10 @@ struct RequestEvent {
 // Thread rules: run() is the event-loop thread; nothing else calls into this class.
 class EventLoop {
 public:
-    explicit EventLoop(std::chrono::milliseconds tick);
+    EventLoop(std::chrono::milliseconds tick, Repository& repo);
+
+    // Loads persisted state (LLD §7.6). Called before run().
+    Status load();
 
     // Handles requests and ticks until `inbound` is closed and drained.
     void run(BoundedQueue<RequestEvent>& inbound);
@@ -34,6 +39,7 @@ private:
     void onTick(TimeMs now);
 
     const std::chrono::milliseconds tick_;
+    MetadataManager meta_;
 };
 
 }  // namespace elog
