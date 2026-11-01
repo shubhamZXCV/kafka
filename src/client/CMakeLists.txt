@@ -1,5 +1,6 @@
 add_library(elog_client STATIC
     metadata_cache.cc
+    producer.cc
     rpc_connection.cc)
 
 target_include_directories(elog_client PUBLIC include)
