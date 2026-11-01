@@ -1,14 +1,16 @@
-"""Storage functional tests F-STO-1 … (LLD §15.3)."""
+"""Storage functional tests F-STO-1 … F-STO-5 (LLD §15.3)."""
 
+import random
 import sys
 from pathlib import Path
 
-from elog_test.tools import create_topic, describe_topic, dump, start_consumer, start_producer
+from elog_test.tools import (create_topic, describe_topic, dump, log_verify, start_consumer,
+                             start_producer)
 from elog_test.wait import wait_until
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "analysis"))
-from elog_analysis.checks import check_order, check_skipped  # noqa: E402
-from elog_analysis.loaders import load_processed  # noqa: E402
+from elog_analysis.checks import check_committed_loss, check_order, check_skipped  # noqa: E402
+from elog_analysis.loaders import load_processed, load_produced  # noqa: E402
 
 
 def leaders_ready(cluster, topic):
@@ -49,3 +51,84 @@ def test_F_STO_2_read_from_the_middle_of_a_batch(make_cluster, out_dir):
         records = dump(cluster, "t", 0, start)
         assert records[0]["offset"] == start
         assert [r["offset"] for r in records] == list(range(start, 20_000))
+
+
+def high_watermark(cluster, topic, partition=0):
+    return describe_topic(cluster, topic)["partitions"][partition]["highWatermark"]
+
+
+def batch_starts(segment):
+    """Byte positions and base offsets of the batches in a segment file (LLD §4.5:
+    baseOffset u64 BE, batchLength u32 BE, then batchLength bytes)."""
+    data, pos, starts = segment.read_bytes(), 0, []
+    while pos + 12 <= len(data):
+        base = int.from_bytes(data[pos:pos + 8], "big")
+        starts.append((pos, base))
+        pos += 12 + int.from_bytes(data[pos + 8:pos + 12], "big")
+    return starts
+
+
+def restart_broker(cluster, broker_id, topic):
+    cluster.brokers[broker_id].start()
+    cluster.wait_healthy(len(cluster.brokers))
+    wait_until(lambda: high_watermark(cluster, topic) >= 0, 30, "partition reopened")
+
+
+def test_F_STO_3_kill_during_produce(make_cluster, out_dir):
+    """SIGKILL the broker during heavy produce, restart: log-verify passes and every acked
+    record is still in the log."""
+    cluster = make_cluster(brokers=1, broker_settings={"segment.bytes": 256 << 10})
+    create_topic(cluster, "t", 1)
+    wait_until(leaders_ready(cluster, "t"), 20, "partition leader")
+    producer = start_producer(cluster, "t", out_dir, count=200_000, rate=40_000, keys=100)
+    wait_until(lambda: high_watermark(cluster, "t") > 20_000, 60, "produce under way")
+    cluster.brokers[1].kill()
+    restart_broker(cluster, 1, "t")
+    producer.wait(300)        # some records may have exhausted their retries: not acked
+
+    code, report = log_verify(cluster, 1)
+    assert code == 0, report
+    produced = load_produced(out_dir)
+    assert produced["count"].sum() > 20_000
+    assert check_committed_loss(produced, {("t", 0): dump(cluster, "t", 0)}) == []
+
+
+def test_F_STO_4_torn_tail_is_truncated(make_cluster, out_dir):
+    """Cut the active segment at random positions inside its last batch: the broker starts,
+    the log ends at the last complete batch, log-verify passes."""
+    cluster = make_cluster(brokers=1)
+    create_topic(cluster, "t", 1)
+    wait_until(leaders_ready(cluster, "t"), 20, "partition leader")
+    rng = random.Random(4)
+    for round_ in range(3):
+        producer = start_producer(cluster, "t", out_dir, id=f"p{round_}", count=5_000)
+        assert producer.wait(60) == 0
+        assert cluster.brokers[1].stop() == 0
+        segment = segment_files(cluster, 1, "t", 0)[-1]
+        last_pos, last_base = batch_starts(segment)[-1]
+        size = segment.stat().st_size
+        with open(segment, "r+b") as f:
+            f.truncate(rng.randrange(last_pos + 1, size))     # somewhere inside the last batch
+        restart_broker(cluster, 1, "t")
+        assert high_watermark(cluster, "t") == last_base
+        code, report = log_verify(cluster, 1)
+        assert code == 0, report
+
+
+def test_F_STO_5_indexes_are_rebuilt(make_cluster, out_dir):
+    """Delete every .index file: after a restart they are rebuilt and reads from arbitrary
+    offsets start exactly there."""
+    cluster = make_cluster(brokers=1, broker_settings={"segment.bytes": 64 << 10})
+    create_topic(cluster, "t", 1)
+    wait_until(leaders_ready(cluster, "t"), 20, "partition leader")
+    assert start_producer(cluster, "t", out_dir, count=30_000).wait(120) == 0
+    assert cluster.brokers[1].stop() == 0
+    partition_dir = cluster.root / "broker-1" / "t-0"
+    for index in partition_dir.glob("*.index"):
+        index.unlink()
+
+    restart_broker(cluster, 1, "t")
+    assert len(list(partition_dir.glob("*.index"))) == len(segment_files(cluster, 1, "t", 0))
+    assert all(index.stat().st_size > 0 for index in partition_dir.glob("*.index"))
+    for start in (0, 4_321, 17_777, 29_999):
+        assert dump(cluster, "t", 0, start)[0]["offset"] == start

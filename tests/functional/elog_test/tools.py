@@ -31,6 +31,14 @@ def dump(cluster, topic, partition, start=0):
     return [json.loads(line) for line in out.splitlines()]
 
 
+def log_verify(cluster, broker_id):
+    """elogctl log-verify on one broker's data dir: (exit code, parsed report)."""
+    result = subprocess.run([str(cluster.bin / "elogctl"), "log-verify",
+                             str(cluster.root / f"broker-{broker_id}")],
+                            capture_output=True, text=True, timeout=120)
+    return result.returncode, json.loads(result.stdout) if result.stdout else None
+
+
 def _flags(options):
     argv = []
     for flag, value in options.items():
