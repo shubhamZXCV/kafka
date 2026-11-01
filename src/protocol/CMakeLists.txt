@@ -1,7 +1,9 @@
 add_library(elog_protocol STATIC
     api_keys.cc
     error_codes.cc
+    error_response.cc
     frame.cc
+    frame_server.cc
     json_codec.cc
     msgpack_codec.cc
     record_batch.cc)
