@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.8 |
+| Version | 1.9 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -24,6 +24,7 @@
 | 1.6 | 2026-11-01 | R-13: coordinator connection keys (§12.2); the event loop generates its own ticks (§7.1, §7.2). |
 | 1.7 | 2026-11-01 | R-14: `CreateTopic` validation and errors; offline leader is `-1` (§4.6, §7.5). |
 | 1.8 | 2026-11-01 | R-15: broker heartbeat errors, `LeaderAndIsr` push triggers and retries, `controllerIncarnation` (§4.6, §7.5). |
+| 1.9 | 2026-11-01 | R-16: manual-assignment consumer mode (§10.1, §10.5). |
 
 ---
 
@@ -1775,6 +1776,7 @@ struct ConsumerConfig {
     std::chrono::milliseconds fetchMaxWait{500};
     enum class Reset { Earliest, Latest } autoOffsetReset = Reset::Earliest;
     std::optional<CrashAfterProcess> crashAfterProcess;   // §14
+    std::vector<TopicPartition> assignment;       // manual mode (R-16): used when groupId is empty
 };
 
 struct ConsumedRecord { TopicPartition tp; Offset offset; TimeMs timestampMs;
@@ -1897,6 +1899,8 @@ classDiagram
 | **Heartbeat** | Coordinator heartbeat connection | Sets `rebalanceRequested_` or `fenced_`. Never mutates assignment. |
 
 ### 10.5 Fetcher
+
+**Manual mode (R-16):** with an empty `groupId` the consumer joins no group and commits nothing. It reads `assignment`, or every partition of `topics` if `assignment` is empty, starting at offset 0 (`earliest`) or at the partition's current HW (`latest`), and resets the same way on `OFFSET_OUT_OF_RANGE`. This is what the M1 walking skeleton and `elog-consumer --manual` use.
 
 ```python
 def Fetcher.loop():
@@ -2322,7 +2326,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-15 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-16 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2341,6 +2345,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-13 | §7 coordinator | Ticker thread; coordinator connection settings not specified | The **event loop generates ticks itself** (waits on the queue only until the next tick, checks the deadline after each event), replacing the Ticker thread and its reserved queue slot. The coordinator gains the broker's **`max.frame.bytes`, `max.connections`, `connection.idle.ms`, `request.timeout.ms`** keys with the same defaults. | Same guarantee (ticks never wait behind a full queue) with one thread fewer and no special queue slot. Both servers share one connection server (`FrameServer`), which needs these limits. |
 | R-14 | §12.2 `CreateTopic` | Only the partition-count mismatch specified | Name, partition count and `minIsr` are validated (`INVALID_REQUEST`); a spec differing only in `replicationFactor`/`minIsr` is `INVALID_REQUEST`; too few live brokers is `NOT_ENOUGH_REPLICAS`; an offline leader is reported as `-1`. | The topic name becomes a directory on every broker, so it must not contain `/` or be `..`. Each case needs a defined reply. |
 | R-15 | §7.5 liveness, pushes | Heartbeat errors, push triggers and retry policy, `controllerIncarnation` not specified | Bad heartbeats get `STALE_BROKER_INCARNATION`; `LeaderAndIsr` is pushed on registration and after `CreateTopic`; a failed push is retried after ~500 ms with the broker's current state while it stays alive; `controllerIncarnation` is the coordinator start time (s), informational. | A dead broker must re-register before it serves again; resending current state (not the failed request) can never deliver stale roles; per-partition epochs already fence. |
+| R-16 | §10 client | "Manual-assignment consumer" (implementation plan T1.6) not specified | `ConsumerConfig::assignment`; with an empty `groupId` the consumer reads the listed partitions (or all of `topics`) from `earliest` (0) or `latest` (HW), without a group or commits. | M1 needs a consumer before consumer groups exist (M3); the same fetcher and processing loop are reused by group mode. |
 
 ---
 
