@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.13 |
+| Version | 1.14 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -29,6 +29,7 @@
 | 1.11 | 2026-11-01 | R-18: command lines and outputs of `elog-producer`, `elog-consumer` and `elogctl` (§15.2). |
 | 1.12 | 2026-11-02 | R-19: `segment.bytes` lower bound, `SparseIndex::mu_`, `dump --from`, `logStartOffset` on `OFFSET_OUT_OF_RANGE` (§5, §6.6, §11.1, §12.1, §15.2). |
 | 1.13 | 2026-11-02 | R-20: coordinator `metrics.dir`; assignor default until sticky lands; member IDs; pending joins at shutdown (§7.3, §12.2). |
+| 1.14 | 2026-11-02 | R-21: processed ranges are written before every offset commit (`beforeCommit` hook) (§10.6, §13.1). |
 
 ---
 
@@ -1980,6 +1981,8 @@ def on_fenced():
     join_and_apply()
 ```
 
+**Processed log before commit (R-21):** `ConsumerConfig::beforeCommit`, if set, runs on the processing thread just before every OffsetCommit; `elog-consumer` flushes `processed-<id>.csv` there. A consumer killed between flushes therefore never has committed offsets that its processed log does not show, which the skip check (§13.4) relies on.
+
 **Commit policy (E8 variable):** commit when `sinceLastCommit ≥ commitIntervalRecords` **or** `now − lastCommitMs ≥ commitIntervalTime`. For E8 the time trigger is set to `∞` so that duplicates are a pure function of `N`.
 
 ### 10.7 Heartbeat Loop
@@ -2349,7 +2352,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-20 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-21 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2373,6 +2376,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-18 | §15.2 tools | Commands listed, flags and outputs not specified | Flags, defaults, exit codes and output formats of `elog-producer`, `elog-consumer` and `elogctl` as tabled in §15.2. | Tests and experiment scripts drive the tools and parse their output, so both must be fixed. |
 | R-19 | §12.1, §15.3 storage | `segment.bytes` ≥ 1 MiB; index locking, mid-batch reads by tools and the earliest offset after retention not specified | `segment.bytes` may be as small as 16 KiB; `SparseIndex::mu_` is a leaf lock; `elogctl dump --from N`; an `OFFSET_OUT_OF_RANGE` fetch response carries `highWatermark` and `logStartOffset`, and "earliest" means the log start. | F-STO-1 uses 64 KiB segments; readers look up the index while the writer appends; F-STO-2 starts mid-batch; F-STO-6 needs a consumer at 0 to land on the new log start. |
 | R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` (or a closed connection) at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
+| R-21 | §10.6 consumer, §13.1 processed log | Processed ranges flushed "regularly" | A `beforeCommit` hook runs before every OffsetCommit; `elog-consumer` flushes its processed ranges there. | After a SIGKILL the next consumer resumes from the committed offset; if the processed log lagged the commit, the analysis would report records that were processed as skipped. |
 
 ---
 
