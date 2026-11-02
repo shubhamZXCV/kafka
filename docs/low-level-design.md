@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.18 |
+| Version | 1.19 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -34,6 +34,7 @@
 | 1.16 | 2026-11-02 | R-23: follower truncation takes the minimum of the leader's and its own end offset for the returned epoch, in one round (§6.8). |
 | 1.17 | 2026-11-02 | R-24: when the crash-after-process hook arms and fires, and what it flushes (§14). |
 | 1.18 | 2026-11-02 | R-25: E4 runs at 70 % load, E9 at 65 % (§16.2). |
+| 1.19 | 2026-11-02 | R-26: a rebalance applies added partitions together with their committed offsets (§10.6). |
 
 ---
 
@@ -1971,10 +1972,10 @@ def on_rebalance():                                       # Consuming → Revoki
     if assignor_is_eager:
         state_.revokeAll(); inflight_.removeIf(all)       # stop all, drop buffered records
     resp ← membership_.join(owned=state_.ownedWithEpochs())    # blocks until barrier completes
-    delta ← state_.apply(resp)                            # new version
+    starts ← OffsetFetch(state_.newPartitions(resp))      # R-26: before the fetcher sees them
+    delta ← state_.apply(resp, starts)                    # new version; added start at `starts`,
+                                                          # or reset_policy(tp) if none
     inflight_.removeIf(lambda r: r.tp in delta.revoked)
-    for tp in delta.added: owned[tp].fetchPosition ← owned[tp].processedNext ←
-                                 OffsetFetch(tp) or reset_policy(tp)
     # delta.retained (sticky, same epoch): positions untouched — no pause, no OffsetFetch
     membership_.rebalanceRequested_ ← False
 
@@ -2384,6 +2385,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-23 | §6.8 follower truncation | Loop: truncate to min(leader end, LEO), drop epochs from there, retry | One round: truncate to min(leader's end for `le`, the follower's own end for `le`), and never below HW. | When the leader never had the follower's latest epoch `e` (started before the leader's end), the loop kept the follower's divergent records and asked about `e` forever. The follower's own end offset for `le` is where its log can first differ (as in Kafka's KIP-279). |
 | R-24 | §14 crash hook | "Since the last successful commit" undefined before the first commit, for `k = 0`, and for a partly rejected commit | The hook arms at the run's first commit whose entries are all accepted, and fires when the records processed since the latest such commit reach `k`; it is checked after each processed record and after each commit, so `k = 0` fires right after a commit. `random` draws `k` from `--seed` in `elog-consumer`. A `beforeCrash` callback lets the tool flush its processed ranges; the consumer then logs `crash_hook_fired processed_since_commit=k`, flushes the logs and raises `SIGKILL`. | Firing before any commit would make every restart crash at the same place without progress. The flush keeps the processed log complete, so duplicates can be counted exactly (R-21). |
 | R-25 | §16.2 E4, E9 | E4 at 80 % load; E9's producer rate not given | E4 runs at 70 % of the 4 consumers' capacity, E9 (the E2 scenario) at 65 %. | After one of 4 consumers dies the survivors have 75 % of the capacity, so at 80 % load the group can never reach 95 % of its pre-fault rate and E4's time to full throughput (§13.4) is undefined; it needs a load ≤ 75 / 0.95 ≈ 79 %. E9 needs a backlog that takes several seconds to drain: at 50 % the survivors' spare capacity drains it in about 3 s, at 65 % in 15–20 s. |
+| R-26 | §10.6 consumer rebalance | `apply` the new assignment, then set each added partition's position from OffsetFetch | The consumer fetches the committed offsets of the partitions an assignment adds *before* applying it; `apply` installs the assignment and those start positions under one lock. Added partitions without a committed offset start per `auto.offset.reset`. | Under sticky assignment the fetcher keeps running through a rebalance. Between `apply` and the position update it saw the added partition without a position, reset it to the earliest offset and fetched; those records were valid under the new assignment and were processed again (E5: 2 208 and 2 681 records re-read on two partitions). |
 
 ---
 
