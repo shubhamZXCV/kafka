@@ -33,9 +33,10 @@ def main(run_dir):
     metrics = load_metrics(run_dir)
     lag, t0, end = backlog(metrics), load_phases(run_dir)["warmup"], m["rebalance_end_ms"]
     # What the survivors actually processed while a backlog remained: their capacity under
-    # this load, to compare with the calibrated one in the prediction.
+    # this load, to compare with the calibrated one in the prediction. The window's first
+    # bin is the backlog the drain starts from, so its processing is not part of the drain.
     steady = lag[(lag.index >= m["kill_ms"] - 20_000) & (lag.index < m["kill_ms"])].median()
-    window = drain_window(lag, end, steady) if end else lag.iloc[:0]
+    window = drain_window(lag, end, steady).iloc[1:] if end else lag.iloc[:0]
     survivors_rate = consume_rate(metrics).reindex(window.index).mean() if len(window) else None
     fig, ax = plotting.figure("E9 · backlog drain after a consumer kill",
                               "time since start (s)", "records (acked, not yet processed)")
