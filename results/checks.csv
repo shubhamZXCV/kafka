@@ -1,0 +1,27 @@
+experiment,check,passed,runs,detail
+e1,no acked record lost,3,3,0 partitions with losses · 0 partitions with losses · 0 partitions with losses
+e1,no skipped records (INV-05),3,3,0 partitions with gaps · 0 partitions with gaps · 0 partitions with gaps
+e1,order (INV-01),3,3,0 violations · 0 violations · 0 violations
+e1,stable throughput,3,3,CV 0.039 (limit 0.2) · CV 0.037 (limit 0.2) · CV 0.105 (limit 0.2)
+e2,no skipped records (INV-05),3,3,0 partitions with gaps · 0 partitions with gaps · 0 partitions with gaps
+e2,order within an epoch (INV-01),3,3,0 violations · 0 violations · 0 violations
+e2,rebalance within session + 500 ms (NFR-AVL-01),1,3,7590 ms with a 6000 ms session · 6133 ms with a 6000 ms session · 6704 ms with a 6000 ms session
+e3,near-linear (NFR-AVL-02),1,1,"R² 0.984 (≥ 0.95), slope 1.10, intercept 0.41 s"
+e3,no false evictions from 3 s (NFR-AVL-03),1,1,0 at ≥ 3 s
+e4,sticky 40–70 % faster (SRS §9.1),0,1,-32% faster: 833 ms vs 629 ms
+e5,fenced: 0 regressions (SRS §9.1),1,1,0
+e5,fenced: every stale commit rejected,1,1,6 of 6 rejected; 3 of 3 runs sent one
+e5,no skipped records (INV-05),1,1,0 partitions with gaps
+e5,unfenced control: regressions > 0,1,1,4 in total; 2 of 3 runs sent a stale commit
+e6,0 committed records lost (INV-03),3,3,0 partitions with losses · 0 partitions with losses · 0 partitions with losses
+e6,new leader from the ISR,3,3,"broker 1 killed (ISR [1, 2, 3]), new leader 2 · broker 1 killed (ISR [1, 2, 3]), new leader 2 · broker 1 killed (ISR [1, 2, 3]), new leader 2"
+e6,no skipped records (INV-05),3,3,0 partitions with gaps · 0 partitions with gaps · 0 partitions with gaps
+e7,RSS flat (FR-BP-02),1,1,max growth 2.3 MB (limit 8 MB)
+e7,backlog grows on disk,1,1,0 runs without
+e7,depth ≤ Q (FR-BP-01),1,1,0 runs over their Q
+e8,duplicates = k from the hook,1,1,"15532 measured, 15532 k"
+e8,duplicates ≤ N (INV-10),1,1,"N=10: max 9, N=50: max 48, N=100: max 99, N=500: max 488"
+e8,linear in N,1,1,slope 0.479
+e8,mean ≈ (N − 1) / 2,1,1,"N=10: 4.9, N=50: 22.6, N=100: 44.8, N=500: 238.4"
+e8,no skipped records (INV-05),1,1,0 partitions with gaps
+e9,drain ≈ capacity − producer rate (NFR-AVL-06),1,3,"212 /s measured, 126 /s predicted (±25%) · 210 /s measured, 126 /s predicted (±25%) · 140 /s measured, 126 /s predicted (±25%)"
