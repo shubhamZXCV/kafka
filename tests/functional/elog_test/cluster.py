@@ -91,7 +91,8 @@ class Cluster:
         self.coordinator_port = free_port()
         self.coordinator_address = f"127.0.0.1:{self.coordinator_port}"
         settings = {"listen.port": self.coordinator_port, "db.path": self.root / "coordinator.db",
-                    "broker.session.timeout.ms": 3000, **(coordinator_settings or {})}
+                    "metrics.dir": self.root, "broker.session.timeout.ms": 3000,
+                    **(coordinator_settings or {})}
         self.coordinator = self._process("coordinator", "elog-coordinator", settings)
         self.brokers = {}
         for broker_id in range(1, brokers + 1):
@@ -128,6 +129,22 @@ class Cluster:
                  "--brokers", str(brokers)], capture_output=True)
             return result.returncode == 0
         wait_until(healthy, timeout, f"{brokers} live brokers")
+
+    def restart_coordinator(self, timeout=20):
+        """Graceful stop and start; brokers re-register on their own (R-15)."""
+        assert self.coordinator.stop() == 0
+        self.coordinator.start()
+        wait_until(lambda: port_open(self.coordinator_port), timeout, "coordinator listening")
+        self.wait_healthy(len(self.brokers), timeout)
+
+    def events(self):
+        """The coordinator's events-coordinator.csv rows as dicts (LLD §13.1)."""
+        path = self.root / "events-coordinator.csv"
+        if not path.exists():
+            return []
+        import csv
+        with open(path) as f:
+            return list(csv.DictReader(f))
 
     def track(self, process):
         """Adds a tool process so teardown also stops and checks it."""

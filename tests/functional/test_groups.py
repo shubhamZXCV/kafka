@@ -98,3 +98,24 @@ def test_F_GRP_4_restart_resumes_from_the_committed_offset(make_cluster, out_dir
     assert check_no_skips(processed, load_produced(out_dir)) == []
     duplicates, _ = count_duplicates(processed)
     assert duplicates <= 100                            # at most one commit interval
+
+
+def test_F_GRP_5_coordinator_restart(make_cluster, out_dir):
+    """Restart the coordinator under a running group: the consumers rejoin, the first
+    generation after the restart is the previous one + 1, and nothing is skipped."""
+    cluster = make_cluster(brokers=1)
+    topic_with_records(cluster, out_dir, 4, 30_000)
+    consumers = [start_consumer(cluster, "t", out_dir, id=f"c{i}", group="g", inflight=50, **FAST)
+                 for i in range(2)]
+    before = wait_until(stable_with(cluster, 2), 30, "2 stable members")["generation"]
+    events_before = len(cluster.events())
+
+    cluster.restart_coordinator()
+    wait_until(stable_with(cluster, 2), 30, "both consumers back")
+    after = [int(e["generation"]) for e in cluster.events()[events_before:]
+             if e["event"] == "rebalance_end"]
+    assert after and after[0] == before + 1
+    wait_until(lambda: all_committed(cluster), 60, "everything committed")
+    for c in consumers:
+        c.stop()
+    assert check_no_skips(load_processed(out_dir), load_produced(out_dir)) == []
