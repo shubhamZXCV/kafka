@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "elog/common/logging.h"
+#include "elog/common/time.h"
 #include "elog/protocol/record_batch.h"
 
 namespace elog {
@@ -62,8 +63,8 @@ ErrorCode Replica::applyLeaderAndIsr(const PartitionState& state, BrokerId self)
         return ErrorCode::NONE;  // idempotent: pushes may be retried
     }
     if (role == Role::LEADER) {
-        becomeLeader(state.leaderEpoch, {state.isr.begin(), state.isr.end()},
-                     static_cast<std::uint16_t>(state.minIsr));
+        becomeLeader(state.leaderEpoch, {state.isr.begin(), state.isr.end()}, state.replicas,
+                     static_cast<std::uint16_t>(state.minIsr), self);
     } else {
         becomeFollower(state.leaderEpoch, state.leader);
     }
@@ -71,10 +72,18 @@ ErrorCode Replica::applyLeaderAndIsr(const PartitionState& state, BrokerId self)
     return ErrorCode::NONE;
 }
 
-void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr) {
+// LLD §6.3: every other replica starts as a follower we know nothing about yet.
+void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr,
+                           const std::vector<BrokerId>& replicas, std::uint16_t minIsr,
+                           BrokerId self) {
     leaderEpoch_ = epoch;
     role_ = Role::LEADER;
-    leader_ = LeaderState{std::move(isr), minIsr};
+    leader_ = LeaderState{std::move(isr), std::nullopt, {}, minIsr};
+    for (BrokerId replica : replicas) {
+        if (replica != self) {
+            leader_->followers[replica] = FollowerProgress{0, 0, 0, time::monotonicMs()};
+        }
+    }
     maybeAdvanceHw();
     hwCv_.notify_all();  // LLD §6.3: produces parked under the old epoch fail with NOT_LEADER
     hwNotifier_.bump();  // and long-polling fetches re-check the role
@@ -87,6 +96,7 @@ void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t mi
 void Replica::becomeFollower(Epoch epoch, BrokerId leader) {
     leaderEpoch_ = epoch;
     role_ = Role::FOLLOWER;
+    followerState_ = FollowerState::TRUNCATING;  // agree with the new leader before fetching
     leader_.reset();
     hwCv_.notify_all();  // produces parked under the old role fail with NOT_LEADER
     hwNotifier_.bump();

@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -27,10 +28,26 @@ enum class Role {
     LEADER,
 };
 
-// What only the leader tracks (LLD §6.1). Follower progress comes with replication.
+// What the leader knows about one follower, learnt from its replica fetches (LLD §6.1).
+struct FollowerProgress {
+    Offset leo = 0;                   // the follower's log end: its last fetchOffset
+    TimeMs lastFetchMs = 0;           // monotonic
+    Offset leaderLeoAtLastFetch = 0;  // our LEO when it last fetched
+    TimeMs lastCaughtUpMs = 0;        // last time it had everything we had
+};
+
+// What only the leader tracks (LLD §6.1).
 struct LeaderState {
     std::set<BrokerId> isr;
+    std::optional<std::set<BrokerId>> pendingIsr;  // an AlterIsr in flight (R-7)
+    std::map<BrokerId, FollowerProgress> followers;
     std::uint16_t minIsr = 1;  // fewer ISR members than this and nothing commits (ADR-03)
+};
+
+// A follower first truncates its log to agree with the leader, then fetches (LLD §6.8).
+enum class FollowerState {
+    TRUNCATING,
+    FETCHING,
 };
 
 // Committed records for a consumer, at most the credit it asked for (LLD §6.6).
@@ -113,10 +130,11 @@ public:
     Offset logStartOffset() const { return log_->logStartOffset(); }
 
 private:
-    void becomeLeader(Epoch epoch, std::set<BrokerId> isr, std::uint16_t minIsr);  // requires mu_
-    void becomeFollower(Epoch epoch, BrokerId leader);                             // requires mu_
-    Status checkLeaderEpoch(Epoch requestEpoch) const;                             // requires mu_
-    void maybeAdvanceHw();                                                         // requires mu_
+    void becomeLeader(Epoch epoch, std::set<BrokerId> isr, const std::vector<BrokerId>& replicas,
+                      std::uint16_t minIsr, BrokerId self);  // requires mu_
+    void becomeFollower(Epoch epoch, BrokerId leader);       // requires mu_
+    Status checkLeaderEpoch(Epoch requestEpoch) const;       // requires mu_
+    void maybeAdvanceHw();                                   // requires mu_
 
     const TopicPartition tp_;
     std::mutex mu_;
@@ -128,7 +146,8 @@ private:
     // LLD §11.4: stored with release after the records below it are in the log; readers
     // load with acquire.
     std::atomic<Offset> hw_{0};
-    std::optional<LeaderState> leader_;  // set while role_ is LEADER
+    std::optional<LeaderState> leader_;                        // set while role_ is LEADER
+    FollowerState followerState_ = FollowerState::TRUNCATING;  // meaningful while FOLLOWER
     std::counting_semaphore<kMaxPendingProduce> pendingSlots_;
     HwNotifier& hwNotifier_;
 };
