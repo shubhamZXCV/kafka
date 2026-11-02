@@ -169,6 +169,11 @@ public:
     // up for longer than lagTimeMax. The change is only proposed (pendingIsr), not applied.
     std::optional<IsrProposal> maybeShrinkIsr(TimeMs now, std::chrono::milliseconds lagTimeMax);
 
+    // The coordinator persisted our proposal (LLD §6.7): apply it and re-evaluate HW.
+    void onIsrCommitted(Epoch epoch, const std::vector<BrokerId>& isr);
+    // The proposal was refused (stale epoch): forget it; a LeaderAndIsr follows.
+    void abortIsrChange(Epoch epoch);
+
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }
 

@@ -19,13 +19,13 @@ FrameServerConfig serverConfig(const BrokerConfig& cfg) {
 BrokerServer::BrokerServer(BrokerConfig cfg)
     : cfg_(std::move(cfg)),
       replicas_(cfg_.dataDir, cfg_.log, cfg_.maxPendingProduce, hwNotifier_),
+      agent_(cfg_, replicas_),
       produceHandler_(replicas_, cfg_),
       fetchHandler_(replicas_, hwNotifier_, cfg_),
-      replicaFetchHandler_(replicas_, hwNotifier_, cfg_),
+      replicaFetchHandler_(replicas_, hwNotifier_, agent_, cfg_),
       fetchers_(replicas_, cfg_),
       dispatcher_(produceHandler_, fetchHandler_, replicaFetchHandler_, replicas_, fetchers_,
                   cfg_.brokerId),
-      agent_(cfg_),
       server_(
           serverConfig(cfg_),
           [this](const Frame& request) { return dispatcher_.dispatch(request); }, "broker") {}
@@ -64,6 +64,11 @@ void BrokerServer::scheduleJobs() {
                      [this] { replicas_.checkpointHighWatermarks(); });
     scheduler_.every("retention", cfg_.retentionCheckInterval,
                      [this] { replicas_.applyRetention(); });
+    scheduler_.every("isr-shrink", cfg_.replicaLagTimeMax / 2, [this] {  // LLD §6.10
+        for (IsrProposal& proposal : replicas_.maybeShrinkIsrs(cfg_.replicaLagTimeMax)) {
+            agent_.proposeIsr(std::move(proposal));
+        }
+    });
 }
 
 void BrokerServer::shutdown() {

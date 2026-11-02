@@ -8,8 +8,8 @@
 namespace elog {
 
 ReplicaFetchHandler::ReplicaFetchHandler(ReplicaManager& replicas, HwNotifier& hwNotifier,
-                                         const BrokerConfig& cfg)
-    : replicas_(replicas), hwNotifier_(hwNotifier), cfg_(cfg) {}
+                                         CoordinatorAgent& agent, const BrokerConfig& cfg)
+    : replicas_(replicas), hwNotifier_(hwNotifier), agent_(agent), cfg_(cfg) {}
 
 // Like the consumer fetch long-poll (LLD §6.6): the notifier version is read before the
 // first pass, and every wake-up reads again.
@@ -46,6 +46,9 @@ ReplicaFetchResponse ReplicaFetchHandler::readOnce(const ReplicaFetchRequest& re
             out.error = data.error();
             response.partitions.push_back(std::move(out));
             continue;
+        }
+        if (data.value().expansion) {
+            agent_.proposeIsr(std::move(*data.value().expansion));  // sent from the agent thread
         }
         out.highWatermark = data.value().highWatermark;
         out.leaderLeo = data.value().leaderLeo;

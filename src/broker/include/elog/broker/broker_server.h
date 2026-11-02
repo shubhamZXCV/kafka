@@ -35,12 +35,12 @@ private:
     const BrokerConfig cfg_;
     HwNotifier hwNotifier_;
     ReplicaManager replicas_;
+    CoordinatorAgent agent_;  // before the handlers that queue ISR proposals on it
     ProduceHandler produceHandler_;
     FetchHandler fetchHandler_;
     ReplicaFetchHandler replicaFetchHandler_;
     ReplicaFetcherManager fetchers_;
     RequestDispatcher dispatcher_;
-    CoordinatorAgent agent_;
     BrokerScheduler scheduler_;
     FrameServer server_;
 };

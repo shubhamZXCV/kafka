@@ -330,6 +330,26 @@ std::optional<IsrProposal> Replica::maybeExpandIsr(BrokerId follower) {
     return IsrProposal{tp_, leaderEpoch_, grown};
 }
 
+void Replica::onIsrCommitted(Epoch epoch, const std::vector<BrokerId>& isr) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ != Role::LEADER || leaderEpoch_ != epoch) {
+        return;
+    }
+    leader_->isr = {isr.begin(), isr.end()};
+    leader_->pendingIsr.reset();
+    maybeAdvanceHw();
+    logging::get("replication")
+        ->info("isr_committed topic={} partition={} epoch={} isr={}", tp_.topic, tp_.partition,
+               epoch, isr.size());
+}
+
+void Replica::abortIsrChange(Epoch epoch) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ == Role::LEADER && leaderEpoch_ == epoch) {
+        leader_->pendingIsr.reset();
+    }
+}
+
 Status Replica::awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch) {
     std::unique_lock lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
     const auto leadershipMoved = [&] { return role_ != Role::LEADER || leaderEpoch_ != epoch; };
