@@ -34,11 +34,14 @@ Result<std::vector<PartitionError>> OffsetCommitter::commit(const MemberId& memb
                                                             AssignmentState& state) {
     const std::vector<OffsetCommitEntry> entries = state.pendingCommits();
     sinceLastCommit_ = 0;
-    lastCommit_ = std::chrono::steady_clock::now();
     if (entries.empty()) {
+        lastCommit_ = std::chrono::steady_clock::now();
         return std::vector<PartitionError>{};
     }
     auto frame = coordinator_.call(encode(OffsetCommitRequest{groupId_, memberId, entries}, 0));
+    // The time trigger counts from the reply: counted from the request, a commit slower
+    // than commitIntervalTime would make the next one due after a single record.
+    lastCommit_ = std::chrono::steady_clock::now();
     if (!frame.ok()) {
         return {frame.error(), frame.message()};
     }
