@@ -1,5 +1,6 @@
 """Loaders for the CSV files every run writes (LLD §13.1)."""
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -50,3 +51,24 @@ def load_metrics(run_dir, pattern="metrics-*.csv"):
     """Metric samples (LLD §13.1), one row per metric per flush; `labels` is "" if none."""
     data = _load(run_dir, pattern, METRIC_COLUMNS)
     return data.assign(labels=data["labels"].fillna(""))
+
+
+def load_log(run_dir):
+    """The final committed log, as experiments save it (`elogctl dump` per partition into
+    log-<topic>-<partition>.jsonl): {(topic, partition): [records in offset order]}."""
+    log = {}
+    for path in sorted(Path(run_dir).glob("log-*.jsonl")):
+        topic, partition = path.stem[len("log-"):].rsplit("-", 1)
+        log[(topic, int(partition))] = [json.loads(line) for line in path.read_text().splitlines()
+                                        if line.strip()]
+    return log
+
+
+def load_phases(run_dir):
+    """{phase: ts_ms} from phases.csv, which experiment scripts write as each phase
+    (warmup, measure, drain, ...) begins."""
+    path = Path(run_dir) / "phases.csv"
+    if not path.exists():
+        return {}
+    phases = pd.read_csv(path)
+    return dict(zip(phases["phase"], phases["ts_ms"].astype(int)))

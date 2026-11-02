@@ -41,10 +41,15 @@ def rebalance_time_ms(events, faults, action="kill", group=None):
 
 
 def consume_rate(metrics):
-    """Records consumed per second by the whole group: Σ consume_records_total increments,
-    in 1 s bins. Indexed by bin start (ms). A restarted consumer's counter starts at 0
-    again, so a decrease counts as the new value, not a negative increment."""
-    rows = metrics[metrics["metric"] == "consume_records_total"].sort_values("ts_ms")
+    """Records consumed per second by the whole group, in 1 s bins (see counter_rate)."""
+    return counter_rate(metrics, "consume_records_total")
+
+
+def counter_rate(metrics, name):
+    """Σ over every process and label set of a counter's increments, in 1 s bins, indexed
+    by bin start (ms). A restarted process's counter starts at 0 again, so a decrease
+    counts as the new value, not a negative increment."""
+    rows = metrics[metrics["metric"] == name].sort_values("ts_ms")
     increments = []
     for _, series in rows.groupby(["node", "labels"]):
         values = series["value"].to_numpy()
