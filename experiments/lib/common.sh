@@ -22,10 +22,11 @@ REPEAT=5
 SEED=1
 
 # Consumer capacity model (R-22, E7's "callback sleep"): each record costs PROCESS_US in the
-# callback, which makes a consumer process about CONSUMER_CAPACITY records/s on the
+# callback, which makes a consumer process about CONSUMER_CAPACITY records/s, with a
+# producer running, on the
 # reference host (experiments/CALIBRATION.md). Workloads are a share of that capacity.
 PROCESS_US=2000
-CONSUMER_CAPACITY=380
+CONSUMER_CAPACITY=315
 
 # rate_at PERCENT CONSUMERS: the producer rate for PERCENT % of CONSUMERS' capacity.
 rate_at() {
