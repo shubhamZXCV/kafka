@@ -7,7 +7,7 @@
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Implementation Plan |
 | Version | 2.0 |
-| Status | Active |
+| Status | Complete |
 | Date | 2026-10-28 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2), [low-level-design.md](low-level-design.md) (LLD v1.1) |
 | Companion | [commit-plan.md](commit-plan.md): the commit-by-commit breakdown of every task below |
@@ -327,14 +327,14 @@ About **40 working days** in total: 35 d of work plus 5 d of buffer. Most of the
 
 | Milestone | Tasks | Demo |
 |---|---|---|
-| **M0** Setup | [ ] T0.1 [ ] T0.2 [ ] T0.3 [ ] T0.4 | [ ] builds |
-| **M1** Skeleton | [ ] T1.1 [ ] T1.2 [ ] T1.3 [ ] T1.4 [ ] T1.5 [ ] T1.6 [ ] T1.7 [ ] T1.8 | [ ] F-PF |
-| **M2** Storage | [ ] T2.1 [ ] T2.2 [ ] T2.3 [ ] T2.4 | [ ] F-STO |
-| **M3** Groups | [ ] T3.1 [ ] T3.2 [ ] T3.3 [ ] T3.4 [ ] T3.5 [ ] T3.6 | [ ] F-GRP |
-| **M4** Fencing ★ | [ ] T4.1 [ ] T4.2 [ ] T4.3 | [ ] F-FEN |
-| **M5** Replication | [ ] T5.1 [ ] T5.2 [ ] T5.3 [ ] T5.4 [ ] T5.5 [ ] T5.6 | [ ] F-REP |
-| **M6** Backpressure + ALO | [ ] T6.1 [ ] T6.2 [ ] T6.3 | [ ] F-BP, F-ALO |
-| **M7** Sticky + experiments | [ ] T7.1 [ ] T7.2 [ ] T7.3 [ ] T7.4 [ ] T7.5 [ ] T7.6 | [ ] E1–E9 |
-| **M8** Wrap-up | [ ] T8.1 [ ] T8.2 [ ] T8.3 [ ] T8.4 [ ] T8.5 | [ ] report + demo |
+| **M0** Setup | [x] T0.1 [x] T0.2 [x] T0.3 [x] T0.4 | [x] builds |
+| **M1** Skeleton | [x] T1.1 [x] T1.2 [x] T1.3 [x] T1.4 [x] T1.5 [x] T1.6 [x] T1.7 [x] T1.8 | [x] F-PF |
+| **M2** Storage | [x] T2.1 [x] T2.2 [x] T2.3 [x] T2.4 | [x] F-STO |
+| **M3** Groups | [x] T3.1 [x] T3.2 [x] T3.3 [x] T3.4 [x] T3.5 [x] T3.6 | [x] F-GRP |
+| **M4** Fencing ★ | [x] T4.1 [x] T4.2 [x] T4.3 | [x] F-FEN |
+| **M5** Replication | [x] T5.1 [x] T5.2 [x] T5.3 [x] T5.4 [x] T5.5 [x] T5.6 | [x] F-REP |
+| **M6** Backpressure + ALO | [x] T6.1 [x] T6.2 [x] T6.3 | [x] F-BP, F-ALO |
+| **M7** Sticky + experiments | [x] T7.1 [x] T7.2 [x] T7.3 [x] T7.4 [x] T7.5 [x] T7.6 | [x] E1–E9 |
+| **M8** Wrap-up | [x] T8.1 [x] T8.2 [x] T8.3 [x] T8.4 [x] T8.5 | [x] report + demo |
 
-**Next actions:** commit `docs/` (commit C001), then start T0.1.
+**Next actions:** none. All milestones are done (2026-11-02); results are in `results/summary.md` and `docs/final-report.md`.
