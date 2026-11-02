@@ -17,3 +17,6 @@ __pycache__/
 # Editors
 .vscode/
 .idea/
+
+# Default output of processes run by hand from the repository root
+/metrics/
