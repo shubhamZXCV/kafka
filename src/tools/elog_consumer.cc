@@ -5,13 +5,15 @@
 //                   --group G [--session-timeout-ms S] [--heartbeat-interval-ms H]
 //                   [--rebalance-timeout-ms R] [--commit-interval-records N]
 //                   [--commit-interval-ms M]) [--count N] [--inflight Q]
-//                   [--reset earliest|latest] [--process-us U] [--id c1] [--out DIR]
+//                   [--reset earliest|latest] [--process-us U]
+//                   [--crash-after-process K|random [--seed S]] [--id c1] [--out DIR]
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <map>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -89,6 +91,33 @@ private:
     std::chrono::steady_clock::time_point lastFlush_ = std::chrono::steady_clock::now();
 };
 
+// LLD §14: --crash-after-process=K, or =random for K ~ Uniform[0, N) drawn from --seed,
+// N being the commit interval.
+Result<std::optional<CrashAfterProcess>> crashAfterProcess(const tools::Args& args,
+                                                           std::uint32_t commitInterval) {
+    const std::string& value = args.get("--crash-after-process");
+    if (value.empty()) {
+        return std::optional<CrashAfterProcess>{};
+    }
+    if (args.get("--group").empty()) {
+        return {ErrorCode::INVALID_REQUEST, "--crash-after-process needs --group"};
+    }
+    if (value == "random") {
+        const auto seed = args.getInt("--seed");
+        if (!seed.ok()) {
+            return {seed.error(), seed.message()};
+        }
+        std::mt19937_64 random(static_cast<std::uint64_t>(seed.value()));
+        const auto k = static_cast<std::uint32_t>(random() % commitInterval);
+        return std::optional<CrashAfterProcess>{CrashAfterProcess{k}};
+    }
+    if (value.find_first_not_of("0123456789") != std::string::npos || value.size() > 9) {
+        return {ErrorCode::INVALID_REQUEST, "--crash-after-process must be a count or random"};
+    }
+    return std::optional<CrashAfterProcess>{
+        CrashAfterProcess{static_cast<std::uint32_t>(std::stoul(value))}};
+}
+
 Result<ConsumerConfig> configFrom(const tools::Args& args) {
     if (args.has("--manual") == !args.get("--group").empty()) {
         return {ErrorCode::INVALID_REQUEST, "give exactly one of --manual and --group"};
@@ -131,6 +160,11 @@ Result<ConsumerConfig> configFrom(const tools::Args& args) {
     }
     cfg.autoOffsetReset =
         reset == "latest" ? ConsumerConfig::Reset::Latest : ConsumerConfig::Reset::Earliest;
+    auto crash = crashAfterProcess(args, cfg.commitIntervalRecords);
+    if (!crash.ok()) {
+        return {crash.error(), crash.message()};
+    }
+    cfg.crashAfterProcess = crash.value();
     return cfg;
 }
 
@@ -152,6 +186,7 @@ int run(const tools::Args& args, const tools::StopSignal& stop) {
         return 2;
     }
     cfg.value().beforeCommit = [&ranges] { ranges.flush(); };  // R-21
+    cfg.value().beforeCrash = [&ranges] { ranges.flush(); };   // R-24
     Consumer consumer(std::move(cfg).value(), *metrics.value());
     std::atomic<bool> done{false};
     std::thread watcher([&] {  // SIGINT/SIGTERM → close(), which ends run()
@@ -201,6 +236,8 @@ int main(int argc, char** argv) {
                                   {"--inflight", "1000"},
                                   {"--reset", "earliest"},
                                   {"--process-us", "0"},
+                                  {"--crash-after-process", ""},
+                                  {"--seed", "1"},
                                   {"--out", "."}});
     if (!args.ok() || !args.value().positional().empty()) {
         std::fprintf(stderr, "elog-consumer: %s\n",

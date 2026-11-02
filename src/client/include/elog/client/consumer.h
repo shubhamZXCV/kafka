@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,11 @@
 #include "elog/common/types.h"
 
 namespace elog {
+
+// LLD §14, R-24: crash once k records were processed since the last successful commit.
+struct CrashAfterProcess {
+    std::uint32_t k = 0;
+};
 
 struct ConsumerConfig {
     std::string coordinator, groupId, clientId;
@@ -33,6 +39,8 @@ struct ConsumerConfig {
     // R-21: runs on the processing thread before every OffsetCommit, e.g. to persist a
     // record of what was processed so it is never behind the committed offsets.
     std::function<void()> beforeCommit;
+    std::optional<CrashAfterProcess> crashAfterProcess;  // group mode only (§14)
+    std::function<void()> beforeCrash;                   // R-24: runs just before the SIGKILL
     enum class Reset { Earliest, Latest } autoOffsetReset = Reset::Earliest;
 };
 
@@ -74,6 +82,7 @@ private:
     void onRebalance();
     void onFenced();
     void doCommit();
+    void maybeCrash();
     void dropBuffered(const std::vector<TopicPartition>& partitions);
     void dropAllBuffered();
 
@@ -86,6 +95,8 @@ private:
     std::unique_ptr<MembershipClient> membership_;  // group mode only
     std::unique_ptr<OffsetCommitter> committer_;    // group mode only
     std::atomic<bool> closed_{false};
+    // R-24: records processed since the last fully accepted commit; none before the first.
+    std::optional<std::uint32_t> processedSinceCommit_;
 };
 
 }  // namespace elog

@@ -1,6 +1,7 @@
 #include "elog/client/consumer.h"
 
 #include <algorithm>
+#include <csignal>
 #include <utility>
 
 #include "elog/client/fetcher.h"
@@ -49,6 +50,10 @@ Status Consumer::run(const std::function<void(const ConsumedRecord&)>& process) 
                 .record(static_cast<double>(time::wallMs() - record->timestampMs));
             if (committer_) {
                 committer_->onProcessed();
+            }
+            if (processedSinceCommit_) {
+                ++*processedSinceCommit_;
+                maybeCrash();  // §14: after processing, before the commit below
             }
         }
         if (committer_ && committer_->due()) {
@@ -159,10 +164,15 @@ void Consumer::doCommit() {
     if (cfg_.beforeCommit) {
         cfg_.beforeCommit();
     }
+    const bool anythingToCommit = !state_.pendingCommits().empty();
     auto errors = committer_->commit(membership_->memberId(), state_);
     if (!errors.ok()) {
         logging::get("consumer")->warn("commit_failed error=\"{}\"", errors.message());
         return;
+    }
+    if (anythingToCommit && errors.value().empty()) {  // R-24: arms or restarts the count
+        processedSinceCommit_ = 0;
+        maybeCrash();
     }
     for (const PartitionError& e : errors.value()) {
         logging::get("consumer")
@@ -177,6 +187,22 @@ void Consumer::doCommit() {
             membership_->fenced = true;
         }
     }
+}
+
+// LLD §14, R-24: a deterministic crash between processing and committing, so exactly k
+// records are delivered again after the restart (FR-DEL-04).
+void Consumer::maybeCrash() {
+    if (!cfg_.crashAfterProcess || !processedSinceCommit_ ||
+        *processedSinceCommit_ < cfg_.crashAfterProcess->k) {
+        return;
+    }
+    if (cfg_.beforeCrash) {
+        cfg_.beforeCrash();
+    }
+    // Every log line is flushed as it is written, so this one is on disk before the kill.
+    logging::get("consumer")
+        ->warn("crash_hook_fired processed_since_commit={}", *processedSinceCommit_);
+    std::raise(SIGKILL);
 }
 
 void Consumer::dropBuffered(const std::vector<TopicPartition>& partitions) {
