@@ -44,6 +44,7 @@ private:
     void onTick(TimeMs now);
     void pushNewRoles();
     void push(BrokerId broker, const std::string* topic);
+    void elect(const std::function<bool(const PartitionRecord&)>& affected);
 
     struct PushRetry {
         std::uint32_t incarnation = 0;
@@ -58,6 +59,8 @@ private:
     BrokerPusher& pusher_;
     const std::uint32_t controllerIncarnation_;  // start time in seconds, informational (R-15)
     std::map<BrokerId, PushRetry> pushRetries_;
+    const TimeMs electionGraceEndMs_;  // LLD §7.6: no elections before brokers re-register
+    bool graceElectionDone_ = false;
 };
 
 }  // namespace elog

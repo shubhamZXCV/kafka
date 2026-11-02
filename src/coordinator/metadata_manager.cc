@@ -189,6 +189,64 @@ Frame MetadataManager::onAlterIsr(const Frame& request) {
     return reply(ErrorCode::NONE, p.isr);
 }
 
+std::set<BrokerId> MetadataManager::electLeaders(
+    const std::function<bool(const PartitionRecord&)>& affected,
+    const std::function<bool(BrokerId)>& alive) {
+    std::set<BrokerId> pushTo;
+    for (auto& [name, topic] : topics_) {
+        for (PartitionRecord& p : topic.partitionStates) {
+            if (!affected(p)) {
+                continue;
+            }
+            PartitionRecord next = p;
+            std::erase_if(next.isr, [&](BrokerId b) { return !alive(b); });
+            if (next.isr.empty()) {
+                next.isr = p.isr;  // never persist an empty ISR (LLD §7.5)
+            }
+            if (p.leader == kNoLeader || !alive(p.leader)) {
+                const auto candidate =
+                    std::find_if(next.replicas.begin(), next.replicas.end(), [&](BrokerId b) {
+                        return alive(b) &&
+                               std::find(next.isr.begin(), next.isr.end(), b) != next.isr.end();
+                    });
+                next.leader = candidate == next.replicas.end() ? kNoLeader : *candidate;
+                if (next.leader != kNoLeader) {
+                    ++next.leaderEpoch;
+                }
+            }
+            if (next.leader == p.leader && next.isr == p.isr && next.leaderEpoch == p.leaderEpoch) {
+                continue;
+            }
+            if (auto status = repo_.savePartitionState({name, p.partition}, next); !status.ok()) {
+                logging::get("coordinator")
+                    ->critical("election_failed topic={} partition={} error=\"{}\"", name,
+                               p.partition, status.message());
+                continue;  // memory never ahead of disk
+            }
+            const bool offline = next.leader == kNoLeader;
+            if (offline && p.leader != kNoLeader) {
+                events_.emit(
+                    {.event = "partition_offline", .tp = TopicPartition{name, p.partition}});
+            } else if (!offline && next.leader != p.leader) {
+                events_.emit({.event = "leader_elected",
+                              .tp = TopicPartition{name, p.partition},
+                              .epoch = next.leaderEpoch,
+                              .detail = "leader=" + std::to_string(next.leader)});
+            }
+            logging::get("coordinator")
+                ->info("partition_state_changed topic={} partition={} leader={} epoch={} isr={}",
+                       name, p.partition, next.leader, next.leaderEpoch, next.isr.size());
+            p = std::move(next);
+            for (BrokerId b : p.replicas) {
+                if (alive(b)) {
+                    pushTo.insert(b);
+                }
+            }
+        }
+    }
+    return pushTo;
+}
+
 std::uint32_t MetadataManager::partitionCount(const std::string& topic) const {
     const auto it = topics_.find(topic);
     return it == topics_.end() ? 0 : it->second.partitions;

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,14 @@ public:
     // `topic` if it is set.
     std::vector<PartitionState> partitionsHostedBy(BrokerId broker,
                                                    const std::string* topic = nullptr) const;
+
+    // LLD §7.5 ISR-only election. `affected` picks the partitions to re-examine (e.g. led
+    // by, or with an ISR holding, a dead broker); for each, brokers that are not `alive`
+    // leave the ISR, and if the leader is gone the first live ISR replica in preference
+    // order leads at epoch + 1 (none: offline, never an unclean election, ADR-03). Each
+    // change is persisted before anything is pushed. Returns the live replicas to push to.
+    std::set<BrokerId> electLeaders(const std::function<bool(const PartitionRecord&)>& affected,
+                                    const std::function<bool(BrokerId)>& alive);
 
     // The number of partitions of `topic`, or 0 if it does not exist.
     std::uint32_t partitionCount(const std::string& topic) const;

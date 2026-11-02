@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <functional>
 #include <variant>
 
 #include "elog/common/logging.h"
@@ -24,7 +25,8 @@ EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPushe
       groups_(repo, meta_, events, cfg.groups),
       offsets_(repo, events, metrics, cfg.fencingEnabled),
       pusher_(pusher),
-      controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
+      controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)),
+      electionGraceEndMs_(time::monotonicMs() + cfg.brokerSessionTimeout.count()) {}
 
 Status EventLoop::load() {
     if (auto status = meta_.load(); !status.ok()) {
@@ -86,6 +88,11 @@ void EventLoop::handle(const ShutdownEvent&) {
 // has nothing to serve); each replica of a new topic gets that topic's partitions.
 void EventLoop::pushNewRoles() {
     for (BrokerId broker : brokers_.takeRegistered()) {
+        // An offline partition whose ISR holds the returning broker gets a leader again.
+        elect([&](const PartitionRecord& p) {
+            return p.leader == kNoLeader &&
+                   std::find(p.isr.begin(), p.isr.end(), broker) != p.isr.end();
+        });
         push(broker, nullptr);
     }
     for (const std::string& topic : meta_.takeCreatedTopics()) {
@@ -141,8 +148,28 @@ Frame EventLoop::dispatch(const Frame& request) {
 }
 
 // LLD §7.2. Leader election for dead brokers and group session timeouts hook in here.
+void EventLoop::elect(const std::function<bool(const PartitionRecord&)>& affected) {
+    const auto alive = [&](BrokerId b) { return brokers_.live(b).has_value(); };
+    for (BrokerId broker : meta_.electLeaders(affected, alive)) {
+        push(broker, nullptr);  // the replica's full current state (R-15)
+    }
+}
+
 void EventLoop::onTick(TimeMs now) {
-    brokers_.onTick(now);
+    // LLD §7.5: a dead broker leaves every ISR, and partitions it led get a new leader.
+    for (BrokerId dead : brokers_.onTick(now)) {
+        elect([&](const PartitionRecord& p) {
+            return p.leader == dead || std::find(p.isr.begin(), p.isr.end(), dead) != p.isr.end();
+        });
+    }
+    // LLD §7.6: once the grace period is over, partitions whose leader never re-registered
+    // after a coordinator restart get one too.
+    if (!graceElectionDone_ && now >= electionGraceEndMs_) {
+        graceElectionDone_ = true;
+        elect([&](const PartitionRecord& p) {
+            return p.leader != kNoLeader && !brokers_.live(p.leader);
+        });
+    }
     groups_.onTick(now);
     offsets_.onTick(now);
     for (auto it = pushRetries_.begin(); it != pushRetries_.end();) {
