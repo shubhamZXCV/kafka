@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,14 @@ struct TopicRecord {
     std::vector<PartitionRecord> partitionStates;  // index = partition number
 };
 
+// One row of a rebalance's ownership diff (LLD §7.3): a new owner and epoch, or none to
+// delete the row (the partition is unowned because the group became empty).
+struct OwnershipChange {
+    TopicPartition tp;
+    std::optional<MemberId> owner;
+    Epoch epoch = 0;
+};
+
 // Every SQL statement the coordinator runs (LLD §8). Each write is one transaction, and the
 // caller changes its in-memory state only after it succeeds, so memory is never ahead of
 // disk (LLD §8.5).
@@ -42,6 +51,18 @@ public:
     Status createTopic(const TopicRecord& topic);
 
     Result<std::vector<TopicRecord>> loadTopics();
+
+    // Groups, ownership and offsets (LLD §8.2, §8.4).
+    Result<Txn> begin();  // for writes that span several calls, e.g. one OffsetCommit
+    Status createGroup(const std::string& groupId, const std::string& assignor);
+    // The new generation and the whole ownership diff in ONE transaction (LLD §8.5).
+    Status saveGeneration(const std::string& groupId, Generation generation,
+                          const std::vector<OwnershipChange>& diff);
+    Status commitOffsetUnfenced(const std::string& groupId, const TopicPartition& tp, Offset offset,
+                                Epoch epoch, TimeMs nowMs);
+    // The committed offset, or nullopt if none.
+    Result<std::optional<Offset>> committedOffset(const std::string& groupId,
+                                                  const TopicPartition& tp);
 
     // Inserts or updates the broker row and returns its new incarnation (LLD §8.4).
     Result<std::uint32_t> registerBroker(BrokerId id, const std::string& host, std::uint16_t port);

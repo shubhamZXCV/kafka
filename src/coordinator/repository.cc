@@ -195,4 +195,107 @@ Status Repository::loadPartitions(TopicRecord& topic) {
     });
 }
 
+Result<Txn> Repository::begin() {
+    return db_->begin();
+}
+
+Status Repository::createGroup(const std::string& groupId, const std::string& assignor) {
+    auto stmt = db_->prepare(
+        "INSERT INTO consumer_group (group_id, generation, assignor) VALUES (:g, 0, :a) "
+        "ON CONFLICT (group_id) DO NOTHING");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    stmt.value()->bind(":g", groupId);
+    stmt.value()->bind(":a", assignor);
+    return stepToEnd(*stmt.value());
+}
+
+Status Repository::saveGeneration(const std::string& groupId, Generation generation,
+                                  const std::vector<OwnershipChange>& diff) {
+    auto txn = db_->begin();
+    if (!txn.ok()) {
+        return {txn.error(), txn.message()};
+    }
+    auto gen = db_->prepare("UPDATE consumer_group SET generation = :gen WHERE group_id = :g");
+    if (!gen.ok()) {
+        return {gen.error(), gen.message()};
+    }
+    gen.value()->bind(":gen", std::int64_t{generation});
+    gen.value()->bind(":g", groupId);
+    if (auto status = stepToEnd(*gen.value()); !status.ok()) {
+        return status;  // txn rolls back
+    }
+    for (const OwnershipChange& change : diff) {
+        auto stmt = db_->prepare(
+            change.owner
+                ? "INSERT INTO partition_ownership (group_id, topic, partition, owner_member, "
+                  "owner_epoch) VALUES (:g, :t, :p, :owner, :epoch) "
+                  "ON CONFLICT (group_id, topic, partition) DO UPDATE SET "
+                  "owner_member = excluded.owner_member, owner_epoch = excluded.owner_epoch"
+                : "DELETE FROM partition_ownership "
+                  "WHERE group_id = :g AND topic = :t AND partition = :p");
+        if (!stmt.ok()) {
+            return {stmt.error(), stmt.message()};
+        }
+        Stmt& s = *stmt.value();
+        s.bind(":g", groupId);
+        s.bind(":t", change.tp.topic);
+        s.bind(":p", std::int64_t{change.tp.partition});
+        if (change.owner) {
+            s.bind(":owner", *change.owner);
+            s.bind(":epoch", std::int64_t{change.epoch});
+        }
+        if (auto status = stepToEnd(s); !status.ok()) {
+            return status;
+        }
+    }
+    return txn.value().commit();
+}
+
+Status Repository::commitOffsetUnfenced(const std::string& groupId, const TopicPartition& tp,
+                                        Offset offset, Epoch epoch, TimeMs nowMs) {
+    // LLD §8.3, unfenced variant: no ownership check at all.
+    auto stmt = db_->prepare(
+        "INSERT INTO committed_offset (group_id, topic, partition, offset, owner_epoch, "
+        "committed_at_ms) VALUES (:g, :t, :p, :offset, :epoch, :now) "
+        "ON CONFLICT (group_id, topic, partition) DO UPDATE SET offset = excluded.offset, "
+        "owner_epoch = excluded.owner_epoch, committed_at_ms = excluded.committed_at_ms");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    Stmt& s = *stmt.value();
+    s.bind(":g", groupId);
+    s.bind(":t", tp.topic);
+    s.bind(":p", std::int64_t{tp.partition});
+    s.bind(":offset", static_cast<std::int64_t>(offset));
+    s.bind(":epoch", std::int64_t{epoch});
+    s.bind(":now", nowMs);
+    return stepToEnd(s);
+}
+
+Result<std::optional<Offset>> Repository::committedOffset(const std::string& groupId,
+                                                          const TopicPartition& tp) {
+    auto stmt = db_->prepare(
+        "SELECT offset FROM committed_offset WHERE group_id = :g AND topic = :t AND partition = "
+        ":p");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    Stmt& s = *stmt.value();
+    s.bind(":g", groupId);
+    s.bind(":t", tp.topic);
+    s.bind(":p", std::int64_t{tp.partition});
+    auto row = s.step();
+    if (!row.ok()) {
+        return {row.error(), row.message()};
+    }
+    if (!row.value()) {
+        return std::optional<Offset>{};
+    }
+    const auto offset = static_cast<Offset>(s.columnInt(0));
+    s.reset();
+    return std::optional<Offset>{offset};
+}
+
 }  // namespace elog
