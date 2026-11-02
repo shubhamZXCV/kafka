@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.12 |
+| Version | 1.13 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -28,6 +28,7 @@
 | 1.10 | 2026-11-01 | R-17: fetch only with at least half the in-flight queue free; note on sequential long-polls (§10.5). |
 | 1.11 | 2026-11-01 | R-18: command lines and outputs of `elog-producer`, `elog-consumer` and `elogctl` (§15.2). |
 | 1.12 | 2026-11-02 | R-19: `segment.bytes` lower bound, `SparseIndex::mu_`, `dump --from`, `logStartOffset` on `OFFSET_OUT_OF_RANGE` (§5, §6.6, §11.1, §12.1, §15.2). |
+| 1.13 | 2026-11-02 | R-20: coordinator `metrics.dir`; assignor default until sticky lands; member IDs; pending joins at shutdown (§7.3, §12.2). |
 
 ---
 
@@ -1342,7 +1343,7 @@ def handle(ev):
 def onJoin(req, reply):
     g ← groups_.getOrCreate(req.groupId, assignor=cfg.defaultAssignor)   # persisted on creation
     if req.memberId == "":
-        m ← Member(id=f"{req.clientId}-{uuid4()}", ...); g.members[m.id] ← m
+        m ← Member(id=f"{req.clientId}-{16 random hex digits}", ...); g.members[m.id] ← m   # R-20
     elif req.memberId not in g.members:
         reply.complete(UNKNOWN_MEMBER); return
     m ← g.members[req.memberId]
@@ -1421,6 +1422,8 @@ def removeMember(g, m, cause, complete=True):
 ```
 
 A member blocked in `JoinGroup` (with `pendingJoin` set) is not evicted for missing heartbeats. Its liveness is covered by the rebalance timeout.
+
+When the coordinator stops, every pending join is answered `UNKNOWN_SERVER_ERROR` so that no connection thread waits forever; the consumer rejoins once the coordinator is back (R-20).
 
 ### 7.4 Offset Commit and Fetch
 
@@ -2093,7 +2096,8 @@ Precedence: built-in default < `--config <file>` (key=value) < `--set key=value`
 | `max.frame.bytes` / `max.connections` | 8 388 608 / 256 | | As for the broker (R-13) |
 | `connection.idle.ms` / `request.timeout.ms` | 300 000 / 30 000 | | Receive / send timeouts on connections (R-13) |
 | `broker.session.timeout.ms` | 6 000 | ≥ 2 × broker heartbeat | |
-| `group.default.assignor` | `sticky` | `roundrobin`, `sticky` | FR-ASSIGN-04 |
+| `group.default.assignor` | `sticky` | `roundrobin`, `sticky` | FR-ASSIGN-04; `roundrobin` until the sticky assignor exists (R-20) |
+| `metrics.dir` | `./metrics` | | `events-coordinator.csv`, `metrics-coordinator.csv` (R-20) |
 | `group.min.session.timeout.ms` | 1 000 | | Rejects lower values |
 | `group.max.session.timeout.ms` | 60 000 | | |
 | `coordinator.fencing.enabled` | `true` | | **`false` only for E5 control.** Logs `FENCING_DISABLED` at WARN every 10 s. |
@@ -2345,7 +2349,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-19 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-20 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2368,6 +2372,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-17 | §6.2 fetch credit | Fetch whenever credit > 0 | Fetch only once `max(1, Q/2)` slots are free (or the queue is empty); sequential per-leader long-polls documented as a latency limitation for idle multi-leader assignments. | With credit = one free slot, a busy consumer sent one-record fetches (20 000 records took 14 s at Q=50). |
 | R-18 | §15.2 tools | Commands listed, flags and outputs not specified | Flags, defaults, exit codes and output formats of `elog-producer`, `elog-consumer` and `elogctl` as tabled in §15.2. | Tests and experiment scripts drive the tools and parse their output, so both must be fixed. |
 | R-19 | §12.1, §15.3 storage | `segment.bytes` ≥ 1 MiB; index locking, mid-batch reads by tools and the earliest offset after retention not specified | `segment.bytes` may be as small as 16 KiB; `SparseIndex::mu_` is a leaf lock; `elogctl dump --from N`; an `OFFSET_OUT_OF_RANGE` fetch response carries `highWatermark` and `logStartOffset`, and "earliest" means the log start. | F-STO-1 uses 64 KiB segments; readers look up the index while the writer appends; F-STO-2 starts mid-batch; F-STO-6 needs a consumer at 0 to land on the new log start. |
+| R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
 
 ---
 
