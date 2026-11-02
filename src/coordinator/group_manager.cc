@@ -23,8 +23,8 @@ std::string_view groupStateName(GroupState state) {
 }
 
 GroupManager::GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events,
-                           GroupConfig cfg)
-    : repo_(repo), meta_(meta), events_(events), cfg_(std::move(cfg)) {}
+                           Metrics& metrics, GroupConfig cfg)
+    : repo_(repo), meta_(meta), events_(events), metrics_(metrics), cfg_(std::move(cfg)) {}
 
 Status GroupManager::load() {
     auto groups = repo_.loadGroups();
@@ -325,6 +325,9 @@ void GroupManager::completeRebalance(Group& group, TimeMs now) {
     }
     group.state = group.members.empty() ? GroupState::EMPTY : GroupState::STABLE;
     replyAssignments(group, now);
+    const std::string labels = "group=" + group.id;
+    metrics_.gauge("group_generation", labels).set(static_cast<std::int64_t>(generation));
+    metrics_.gauge("rebalance_duration_ms", labels).set(now - group.rebalanceStartMs);
     events_.emit({.event = "rebalance_end",
                   .group = group.id,
                   .generation = generation,

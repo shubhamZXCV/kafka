@@ -7,6 +7,7 @@
 #include <string>
 
 #include "elog/common/events.h"
+#include "elog/common/metrics.h"
 #include "elog/coordinator/assignor.h"
 #include "elog/coordinator/group.h"
 #include "elog/coordinator/metadata_manager.h"
@@ -29,7 +30,8 @@ struct GroupConfig {
 // Thread rules: event-loop thread only (LLD §11.3).
 class GroupManager {
 public:
-    GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events, GroupConfig cfg);
+    GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events, Metrics& metrics,
+                 GroupConfig cfg);
 
     // LLD §7.6: groups come back Empty with their generation and ownership, so the next
     // rebalance produces generation + 1 and epochs keep increasing (INV-08). Called once,
@@ -64,6 +66,7 @@ private:
     Repository& repo_;
     const MetadataManager& meta_;
     EventLog& events_;
+    Metrics& metrics_;
     const GroupConfig cfg_;
     std::map<std::string, Group> groups_;
     std::mt19937_64 random_{std::random_device{}()};

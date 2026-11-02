@@ -50,7 +50,7 @@ Status OffsetManager::commitEntry(const OffsetCommitRequest& r, const OffsetComm
             return {accepted.error(), accepted.message()};
         }
         if (!accepted.value()) {
-            metrics_.counter("fence_rejections").add();
+            metrics_.counter("fence_rejections_total", "group=" + r.groupId).add();
             events_.emit({.event = "commit_fenced",
                           .group = r.groupId,
                           .tp = tp,
@@ -70,7 +70,7 @@ Status OffsetManager::commitEntry(const OffsetCommitRequest& r, const OffsetComm
             return {status.error(), status.message()};
         }
         if (previous.value() && e.offset < *previous.value()) {
-            metrics_.counter("offset_regressions").add();
+            metrics_.counter("offset_regressions_total", "group=" + r.groupId).add();
             events_.emit({.event = "offset_regression",
                           .group = r.groupId,
                           .tp = tp,
@@ -80,6 +80,7 @@ Status OffsetManager::commitEntry(const OffsetCommitRequest& r, const OffsetComm
                           .detail = "prev=" + std::to_string(*previous.value())});
         }
     }
+    metrics_.counter("commits_total", "group=" + r.groupId).add();
     events_.emit({.event = "commit_accepted",
                   .group = r.groupId,
                   .tp = tp,

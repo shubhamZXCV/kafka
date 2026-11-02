@@ -22,7 +22,7 @@ EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPushe
     : tick_(cfg.tick),
       meta_(repo, events),
       brokers_(repo, cfg.brokerSessionTimeout),
-      groups_(repo, meta_, events, cfg.groups),
+      groups_(repo, meta_, events, metrics, cfg.groups),
       offsets_(repo, events, metrics, cfg.fencingEnabled),
       pusher_(pusher),
       controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)),
