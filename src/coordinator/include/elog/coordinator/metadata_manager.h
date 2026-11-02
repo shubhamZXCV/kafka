@@ -29,6 +29,9 @@ public:
     std::vector<PartitionState> partitionsHostedBy(BrokerId broker,
                                                    const std::string* topic = nullptr) const;
 
+    // The number of partitions of `topic`, or 0 if it does not exist.
+    std::uint32_t partitionCount(const std::string& topic) const;
+
     // Topics created since the last call, whose roles must be pushed (R-15).
     std::vector<std::string> takeCreatedTopics();
 

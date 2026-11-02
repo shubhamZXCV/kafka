@@ -7,7 +7,9 @@
 #include <string>
 
 #include "elog/common/events.h"
+#include "elog/coordinator/assignor.h"
 #include "elog/coordinator/group.h"
+#include "elog/coordinator/metadata_manager.h"
 #include "elog/coordinator/reply_slot.h"
 #include "elog/coordinator/repository.h"
 #include "elog/protocol/frame.h"
@@ -27,7 +29,7 @@ struct GroupConfig {
 // Thread rules: event-loop thread only (LLD §11.3).
 class GroupManager {
 public:
-    GroupManager(Repository& repo, EventLog& events, GroupConfig cfg);
+    GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events, GroupConfig cfg);
 
     void onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now);
 
@@ -38,9 +40,15 @@ private:
     Group* getOrCreate(const std::string& groupId);
     void replyJoinError(Member& member, ErrorCode error);
     void prepareRebalance(Group& group, const std::string& cause, TimeMs now);
+    void maybeCompleteRebalance(Group& group, TimeMs now);
+    void completeRebalance(Group& group, TimeMs now);
+    std::vector<OwnershipChange> ownershipDiff(const Group& group, const Assignor& assignor,
+                                               Generation generation) const;
+    void replyAssignments(Group& group, TimeMs now);
     MemberId newMemberId(const std::string& clientId);
 
     Repository& repo_;
+    const MetadataManager& meta_;
     EventLog& events_;
     const GroupConfig cfg_;
     std::map<std::string, Group> groups_;

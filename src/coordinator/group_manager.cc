@@ -22,8 +22,9 @@ std::string_view groupStateName(GroupState state) {
     return "?";
 }
 
-GroupManager::GroupManager(Repository& repo, EventLog& events, GroupConfig cfg)
-    : repo_(repo), events_(events), cfg_(std::move(cfg)) {}
+GroupManager::GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events,
+                           GroupConfig cfg)
+    : repo_(repo), meta_(meta), events_(events), cfg_(std::move(cfg)) {}
 
 // LLD §7.3 onJoin: parse → validate → act (the reply waits for the rebalance).
 void GroupManager::onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now) {
@@ -75,6 +76,7 @@ void GroupManager::onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply
     if (group->state != GroupState::PREPARING_REBALANCE) {
         prepareRebalance(*group, "join", now);
     }
+    maybeCompleteRebalance(*group, now);
 }
 
 void GroupManager::failPendingJoins() {
@@ -130,6 +132,117 @@ void GroupManager::prepareRebalance(Group& group, const std::string& cause, Time
     logging::get("coordinator")
         ->info("rebalance_start group={} generation={} cause={} members={}", group.id,
                group.generation, cause, group.members.size());
+}
+
+// LLD §7.3: the barrier: complete once every member has rejoined.
+void GroupManager::maybeCompleteRebalance(Group& group, TimeMs now) {
+    if (group.state != GroupState::PREPARING_REBALANCE) {
+        return;
+    }
+    for (const auto& [id, member] : group.members) {
+        if (!member.rejoined) {
+            return;
+        }
+    }
+    completeRebalance(group, now);
+}
+
+// LLD §7.3 completeRebalance: assign, persist the generation and ownership diff in one
+// transaction, and only then apply it and answer the joins (P4: never reply ahead of disk).
+void GroupManager::completeRebalance(Group& group, TimeMs now) {
+    const auto assignor = makeAssignor(group.assignor);
+    if (!assignor) {  // only configured names are stored, so this is a bug
+        logging::get("coordinator")
+            ->critical("unknown_assignor group={} assignor={}", group.id, group.assignor);
+        return;
+    }
+    const Generation generation = group.generation + 1;
+    const std::vector<OwnershipChange> diff = ownershipDiff(group, *assignor, generation);
+    if (auto status = repo_.saveGeneration(group.id, generation, diff); !status.ok()) {
+        logging::get("coordinator")
+            ->critical("save_generation_failed group={} error=\"{}\"", group.id, status.message());
+        for (auto& [id, member] : group.members) {
+            if (member.pendingJoin) {
+                replyJoinError(member, ErrorCode::UNKNOWN_SERVER_ERROR);
+            }
+        }
+        return;  // memory unchanged; the members join again
+    }
+    group.generation = generation;
+    for (const OwnershipChange& change : diff) {
+        if (change.owner) {
+            group.ownership[change.tp] = {*change.owner, change.epoch};
+        } else {
+            group.ownership.erase(change.tp);
+        }
+    }
+    group.state = group.members.empty() ? GroupState::EMPTY : GroupState::STABLE;
+    replyAssignments(group, now);
+    events_.emit({.event = "rebalance_end",
+                  .group = group.id,
+                  .generation = generation,
+                  .detail = "duration_ms=" + std::to_string(now - group.rebalanceStartMs) +
+                            ";moved=" + std::to_string(diff.size()) +
+                            ";members=" + std::to_string(group.members.size())});
+    logging::get("coordinator")
+        ->info("rebalance_end group={} generation={} members={} moved={}", group.id, generation,
+               group.members.size(), diff.size());
+}
+
+// LLD §7.3: a partition that changed owner, or every partition under an eager assignor,
+// gets the new generation as its ownership epoch; a retained one keeps its epoch.
+std::vector<OwnershipChange> GroupManager::ownershipDiff(const Group& group,
+                                                         const Assignor& assignor,
+                                                         Generation generation) const {
+    std::vector<MemberId> members;
+    std::vector<TopicPartition> partitions;
+    Assignment previous;
+    for (const auto& [id, member] : group.members) {
+        members.push_back(id);
+    }
+    if (!members.empty()) {
+        for (const std::string& topic : group.members.begin()->second.topics) {
+            for (std::uint32_t p = 0; p < meta_.partitionCount(topic); ++p) {
+                partitions.push_back({topic, p});
+            }
+        }
+    }
+    for (const auto& [tp, ownership] : group.ownership) {
+        if (group.members.contains(ownership.owner)) {
+            previous[tp] = ownership.owner;
+        }
+    }
+    const Assignment next =
+        members.empty() ? Assignment{} : assignor.assign(members, partitions, previous);
+    std::vector<OwnershipChange> diff;
+    for (const auto& [tp, ownership] : group.ownership) {
+        if (!next.contains(tp)) {
+            diff.push_back({tp, std::nullopt, 0});  // nobody owns it any more
+        }
+    }
+    for (const auto& [tp, owner] : next) {
+        const auto old = group.ownership.find(tp);
+        if (assignor.eager() || old == group.ownership.end() || old->second.owner != owner) {
+            diff.push_back({tp, owner, generation});
+        }
+    }
+    return diff;
+}
+
+void GroupManager::replyAssignments(Group& group, TimeMs now) {
+    for (auto& [id, member] : group.members) {
+        JoinGroupResponse response{ErrorCode::NONE, id, group.generation, group.assignor, {}};
+        for (const auto& [tp, ownership] : group.ownership) {
+            if (ownership.owner == id) {
+                response.assignment.push_back({tp.topic, tp.partition, ownership.epoch});
+            }
+        }
+        if (member.pendingJoin) {
+            member.pendingJoin->complete(encode(response, member.pendingJoinCorrelationId));
+            member.pendingJoin.reset();
+        }
+        member.lastHeartbeatMs = now;
+    }
 }
 
 // R-20: unique across restarts without coordination.

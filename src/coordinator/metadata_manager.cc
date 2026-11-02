@@ -139,6 +139,11 @@ std::vector<PartitionState> MetadataManager::partitionsHostedBy(BrokerId broker,
     return states;
 }
 
+std::uint32_t MetadataManager::partitionCount(const std::string& topic) const {
+    const auto it = topics_.find(topic);
+    return it == topics_.end() ? 0 : it->second.partitions;
+}
+
 std::vector<std::string> MetadataManager::takeCreatedTopics() {
     return std::exchange(created_, {});
 }
