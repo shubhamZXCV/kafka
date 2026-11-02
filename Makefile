@@ -3,7 +3,7 @@
 #
 #     make e1 ARGS="--repeat 1 --seed 7"
 
-.PHONY: images e1 e2 e3
+.PHONY: images e1 e2 e3 e4
 
 images:
 	docker build -q -f deploy/docker/Dockerfile.build -t elog-build .
@@ -17,3 +17,6 @@ e2: images
 
 e3: images
 	experiments/e3_session_sweep.sh $(ARGS)
+
+e4: images
+	experiments/e4_eager_vs_sticky.sh $(ARGS)
