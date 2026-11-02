@@ -26,6 +26,7 @@ private:
     Frame handleFetch(const Frame& request);
     Frame handleLeaderAndIsr(const Frame& request);
     Frame handleReplicaFetch(const Frame& request);
+    Frame handleOffsetsForLeaderEpoch(const Frame& request);
 
     ProduceHandler& produce_;
     FetchHandler& fetch_;

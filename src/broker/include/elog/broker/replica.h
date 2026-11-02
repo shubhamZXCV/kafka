@@ -143,6 +143,16 @@ public:
     // The follower side (LLD §6.8), called by this partition's ReplicaFetcherThread.
     std::optional<FollowerView> followerView() const;  // none while leading
     void setFollowerState(Epoch epoch, FollowerState state);
+    // Leader side of OffsetsForLeaderEpoch (LLD §6.8): the largest epoch <= `epoch` and
+    // where it ends in our log. NOT_LEADER unless we lead.
+    Result<std::pair<Epoch, Offset>> endOffsetForEpoch(Epoch epoch) const;
+    // Follower side: the latest epoch in our log, to ask the leader about.
+    std::optional<Epoch> latestLogEpoch() const;
+    // R-23: truncate to min(the leader's end for `leaderEpochFound`, our own end for it),
+    // never below HW (or to HW if we have no epochs), then start fetching. Ignored unless
+    // still following at `epoch`.
+    Status truncateAsFollower(Epoch epoch, std::optional<std::pair<Epoch, Offset>> leaderEnd);
+
     // Appends the leader's batches as they are (offsets already assigned) and sets
     // HW = min(leaderHw, LEO). Ignored unless still following at `epoch`.
     Status appendAsFollower(std::span<std::byte> batches, Offset leaderHw, Epoch epoch);

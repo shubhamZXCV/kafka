@@ -34,6 +34,7 @@ public:
 private:
     void run();
     void fetchOnce();
+    void truncate(Replica& replica, const FollowerView& view);
     Result<Frame> call(const Frame& request);
     bool sleepFor(std::chrono::milliseconds duration);  // false once stopping
 

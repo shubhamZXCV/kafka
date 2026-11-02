@@ -5,6 +5,7 @@
 #include "elog/common/logging.h"
 #include "elog/protocol/error_codes.h"
 #include "elog/protocol/msgpack_codec.h"
+#include "elog/protocol/replication_codec.h"
 
 namespace elog {
 
@@ -68,8 +69,10 @@ void ReplicaFetcherThread::fetchOnce() {
             continue;
         }
         if (view->state == FollowerState::TRUNCATING) {
-            // Leader-epoch truncation comes next; a new follower's log is a prefix already.
-            replica->setFollowerState(view->leaderEpoch, FollowerState::FETCHING);
+            truncate(*replica, *view);  // agree with the leader before fetching (LLD §6.8)
+            if (replica->followerView().value_or(*view).state == FollowerState::TRUNCATING) {
+                continue;  // try again next round
+            }
         }
         request.partitions.push_back({tp.topic, tp.partition, view->leo, view->leaderEpoch});
         sent[tp] = {replica, view->leaderEpoch};
@@ -103,6 +106,28 @@ void ReplicaFetcherThread::fetchOnce() {
                             p.partition, status.message());
             }
         }  // FENCED_LEADER_EPOCH and others: wait for the next LeaderAndIsr
+    }
+}
+
+// LLD §6.8, R-23: ask the leader where our latest epoch ends on its side, then cut there.
+void ReplicaFetcherThread::truncate(Replica& replica, const FollowerView& view) {
+    std::optional<std::pair<Epoch, Offset>> leaderEnd;
+    if (const auto epoch = replica.latestLogEpoch()) {
+        const TopicPartition& tp = replica.topicPartition();
+        auto frame =
+            call(encode(OffsetsForLeaderEpochRequest{{{tp.topic, tp.partition, *epoch}}}, 0));
+        auto response = frame.ok()
+                            ? decodeOffsetsForLeaderEpochResponse(frame.value())
+                            : Result<OffsetsForLeaderEpochResponse>(frame.error(), frame.message());
+        if (!response.ok() || response.value().partitions.size() != 1 ||
+            response.value().partitions[0].error != ErrorCode::NONE) {
+            return;  // the leader is not ready yet; retried next round
+        }
+        const EpochEndOffset& e = response.value().partitions[0];
+        leaderEnd = std::pair{e.leaderEpoch, e.endOffset};
+    }
+    if (auto status = replica.truncateAsFollower(view.leaderEpoch, leaderEnd); !status.ok()) {
+        logging::get("replication")->error("truncate_failed error=\"{}\"", status.message());
     }
 }
 

@@ -227,6 +227,40 @@ void Replica::setFollowerState(Epoch epoch, FollowerState state) {
     }
 }
 
+Result<std::pair<Epoch, Offset>> Replica::endOffsetForEpoch(Epoch epoch) const {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ != Role::LEADER) {
+        return {ErrorCode::NOT_LEADER, "not the leader"};
+    }
+    return log_->epochCache().endOffsetFor(epoch, log_->leo());
+}
+
+std::optional<Epoch> Replica::latestLogEpoch() const {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    return log_->epochCache().latestEpoch();
+}
+
+Status Replica::truncateAsFollower(Epoch epoch, std::optional<std::pair<Epoch, Offset>> leaderEnd) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog (LLD §11.2)
+    if (role_ != Role::FOLLOWER || leaderEpoch_ != epoch) {
+        return okStatus();  // the role changed meanwhile; the next LeaderAndIsr decides
+    }
+    Offset target = hw();  // no epochs: keep only what is committed
+    if (leaderEnd) {
+        const Offset ownEnd = log_->epochCache().endOffsetFor(leaderEnd->first, log_->leo()).second;
+        // ADR-10, R-23: the logs agree up to the shorter end of the last common epoch.
+        target = std::max(std::min(leaderEnd->second, ownEnd), hw());
+    }
+    if (auto status = log_->truncateTo(target); !status.ok()) {
+        return status;
+    }
+    followerState_ = FollowerState::FETCHING;
+    logging::get("replication")
+        ->info("follower_truncated topic={} partition={} epoch={} to={}", tp_.topic, tp_.partition,
+               epoch, log_->leo());
+    return okStatus();
+}
+
 Status Replica::appendAsFollower(std::span<std::byte> batches, Offset leaderHw, Epoch epoch) {
     std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog (LLD §11.2)
     if (role_ != Role::FOLLOWER || leaderEpoch_ != epoch) {

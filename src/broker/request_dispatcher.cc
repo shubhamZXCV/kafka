@@ -5,6 +5,7 @@
 #include "elog/protocol/json_codec.h"
 #include "elog/protocol/messages.h"
 #include "elog/protocol/msgpack_codec.h"
+#include "elog/protocol/replication_codec.h"
 
 namespace elog {
 
@@ -28,6 +29,8 @@ Frame RequestDispatcher::dispatch(const Frame& request) {
             return handleLeaderAndIsr(request);
         case ApiKey::ReplicaFetch:
             return handleReplicaFetch(request);
+        case ApiKey::OffsetsForLeaderEpoch:
+            return handleOffsetsForLeaderEpoch(request);
         default:
             break;
     }
@@ -80,6 +83,30 @@ Frame RequestDispatcher::handleReplicaFetch(const Frame& request) {
         return encodeErrorResponse(request, fetch.error());
     }
     return encode(replicaFetch_.handle(fetch.value()), request.correlationId);
+}
+
+// LLD §6.8, leader side: where each asked-about epoch ends in our log.
+Frame RequestDispatcher::handleOffsetsForLeaderEpoch(const Frame& request) {
+    auto query = decodeOffsetsForLeaderEpochRequest(request);
+    if (!query.ok()) {
+        return encodeErrorResponse(request, query.error());
+    }
+    OffsetsForLeaderEpochResponse response;
+    for (const EpochQuery& q : query.value().partitions) {
+        EpochEndOffset out{q.topic, q.partition, ErrorCode::NONE, 0, 0};
+        const auto replica = replicas_.get({q.topic, q.partition});
+        auto end = replica
+                       ? replica->endOffsetForEpoch(q.leaderEpoch)
+                       : Result<std::pair<Epoch, Offset>>(ErrorCode::UNKNOWN_TOPIC_OR_PARTITION);
+        if (end.ok()) {
+            out.leaderEpoch = end.value().first;
+            out.endOffset = end.value().second;
+        } else {
+            out.error = end.error();
+        }
+        response.partitions.push_back(out);
+    }
+    return encode(response, request.correlationId);
 }
 
 }  // namespace elog
