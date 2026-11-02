@@ -37,6 +37,7 @@ public:
     RangeWriter(const std::string& path, std::string consumerId)
         : out_(path), consumerId_(std::move(consumerId)) {
         out_ << "ts_ms,consumer,topic,partition,start_offset,end_offset_excl,owner_epoch\n";
+        out_.flush();  // a consumer killed before its first range still leaves a valid file
     }
 
     bool ok() const { return out_.good(); }
@@ -149,6 +150,7 @@ int run(const tools::Args& args, const tools::StopSignal& stop) {
         std::fprintf(stderr, "elog-consumer: cannot write to %s\n", out.c_str());
         return 2;
     }
+    cfg.value().beforeCommit = [&ranges] { ranges.flush(); };  // R-21
     Consumer consumer(std::move(cfg).value(), *metrics.value());
     std::atomic<bool> done{false};
     std::thread watcher([&] {  // SIGINT/SIGTERM → close(), which ends run()

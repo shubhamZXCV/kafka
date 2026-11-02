@@ -30,6 +30,9 @@ struct ConsumerConfig {
     std::chrono::milliseconds rebalanceTimeout{10'000};
     std::uint32_t commitIntervalRecords = 100;            // N (E8)
     std::chrono::milliseconds commitIntervalTime{1'000};  // negative: disabled (E8)
+    // R-21: runs on the processing thread before every OffsetCommit, e.g. to persist a
+    // record of what was processed so it is never behind the committed offsets.
+    std::function<void()> beforeCommit;
     enum class Reset { Earliest, Latest } autoOffsetReset = Reset::Earliest;
 };
 

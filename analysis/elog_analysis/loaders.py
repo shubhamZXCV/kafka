@@ -10,7 +10,9 @@ PROCESSED_COLUMNS = ["ts_ms", "consumer", "topic", "partition", "start_offset",
 
 
 def _load(run_dir, pattern, columns):
-    frames = [pd.read_csv(path) for path in sorted(Path(run_dir).glob(pattern))]
+    # A process killed before writing anything leaves an empty file: no rows.
+    frames = [pd.read_csv(path) for path in sorted(Path(run_dir).glob(pattern))
+              if path.stat().st_size > 0]
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame(columns=columns)

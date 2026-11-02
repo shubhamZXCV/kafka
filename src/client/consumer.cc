@@ -150,6 +150,9 @@ void Consumer::onUnknownMember() {
 }
 
 void Consumer::doCommit() {
+    if (cfg_.beforeCommit) {
+        cfg_.beforeCommit();
+    }
     auto errors = committer_->commit(membership_->memberId(), state_);
     if (!errors.ok()) {
         logging::get("consumer")->warn("commit_failed error=\"{}\"", errors.message());
