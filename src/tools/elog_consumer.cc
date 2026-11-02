@@ -5,7 +5,7 @@
 //                   --group G [--session-timeout-ms S] [--heartbeat-interval-ms H]
 //                   [--rebalance-timeout-ms R] [--commit-interval-records N]
 //                   [--commit-interval-ms M]) [--count N] [--inflight Q]
-//                   [--reset earliest|latest] [--id c1] [--out DIR]
+//                   [--reset earliest|latest] [--process-us U] [--id c1] [--out DIR]
 
 #include <atomic>
 #include <chrono>
@@ -137,9 +137,10 @@ Result<ConsumerConfig> configFrom(const tools::Args& args) {
 int run(const tools::Args& args, const tools::StopSignal& stop) {
     auto cfg = configFrom(args);
     const auto count = args.getInt("--count");
-    if (!cfg.ok() || !count.ok() || count.value() < 0) {
+    const auto processUs = args.getInt("--process-us");  // R-22: the E7 "callback sleep"
+    if (!cfg.ok() || !count.ok() || count.value() < 0 || !processUs.ok() || processUs.value() < 0) {
         std::fprintf(stderr, "elog-consumer: %s\n",
-                     cfg.ok() ? "bad --count" : cfg.message().c_str());
+                     cfg.ok() ? "bad --count or --process-us" : cfg.message().c_str());
         return 2;
     }
     const std::string id = args.get("--id"), out = args.get("--out");
@@ -161,6 +162,9 @@ int run(const tools::Args& args, const tools::StopSignal& stop) {
     });
     std::uint64_t processed = 0;
     const auto status = consumer.run([&](const ConsumedRecord& record) {
+        if (processUs.value() > 0) {
+            std::this_thread::sleep_for(std::chrono::microseconds(processUs.value()));
+        }
         ranges.processed(record);
         if (++processed == std::uint64_t(count.value())) {
             consumer.close();
@@ -196,6 +200,7 @@ int main(int argc, char** argv) {
                                   {"--count", "0"},
                                   {"--inflight", "1000"},
                                   {"--reset", "earliest"},
+                                  {"--process-us", "0"},
                                   {"--out", "."}});
     if (!args.ok() || !args.value().positional().empty()) {
         std::fprintf(stderr, "elog-consumer: %s\n",

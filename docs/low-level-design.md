@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.14 |
+| Version | 1.15 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -30,6 +30,7 @@
 | 1.12 | 2026-11-02 | R-19: `segment.bytes` lower bound, `SparseIndex::mu_`, `dump --from`, `logStartOffset` on `OFFSET_OUT_OF_RANGE` (§5, §6.6, §11.1, §12.1, §15.2). |
 | 1.13 | 2026-11-02 | R-20: coordinator `metrics.dir`; assignor default until sticky lands; member IDs; pending joins at shutdown (§7.3, §12.2). |
 | 1.14 | 2026-11-02 | R-21: processed ranges are written before every offset commit (`beforeCommit` hook) (§10.6, §13.1). |
+| 1.15 | 2026-11-02 | R-22: `elog-consumer --process-us` (per-record callback sleep) (§15.2, §16.2). |
 
 ---
 
@@ -2262,7 +2263,7 @@ tests/functional/
 | Tool | Flags (defaults) | Behaviour and output |
 |---|---|---|
 | `elog-producer` | `--topic T` (required), `--id p1`, `--count 0` (0 = until SIGTERM), `--rate 0` (records/s, 0 = unlimited), `--keys 100` (0 = no key), `--payload 100` (pad bytes), `--seed 1`, `--out .` | Record *i* has `seq = i` and key `key-<k>`, *k* uniform in `[0, keys)` from a generator seeded with `seed`; the value is the §4.5 map. Writes `produced-<id>.csv` (contiguous acked runs per partition, flushed every second and at exit) and `metrics-<id>.csv`. Exit 0 if every record was acked, 1 otherwise. |
-| `elog-consumer` | `--topic T` (required); exactly one of `--manual` (with `--partitions 0,1,…`, default all) or `--group G` (with `--session-timeout-ms 6000`, `--heartbeat-interval-ms 2000`, `--rebalance-timeout-ms 10000`, `--commit-interval-records 100`, `--commit-interval-ms 1000`, negative = off); `--id c1`, `--count 0` (0 = until SIGTERM), `--inflight 1000`, `--reset earliest\|latest`, `--out .` | Manual mode (R-16) or group mode (§10.6). Writes `processed-<id>.csv` ranges at least every second and at exit, one range per ownership epoch (`owner_epoch` is 0 in manual mode), and `metrics-<id>.csv`. |
+| `elog-consumer` | `--topic T` (required); exactly one of `--manual` (with `--partitions 0,1,…`, default all) or `--group G` (with `--session-timeout-ms 6000`, `--heartbeat-interval-ms 2000`, `--rebalance-timeout-ms 10000`, `--commit-interval-records 100`, `--commit-interval-ms 1000`, negative = off); `--id c1`, `--count 0` (0 = until SIGTERM), `--inflight 1000`, `--reset earliest\|latest`, `--process-us 0` (R-22: sleep per record, the E7 "callback sleep"), `--out .` | Manual mode (R-16) or group mode (§10.6). Writes `processed-<id>.csv` ranges at least every second and at exit, one range per ownership epoch (`owner_epoch` is 0 in manual mode), and `metrics-<id>.csv`. |
 | `elogctl create-topic <name> -p P -r R [--min-isr N]` | `--min-isr 1` | Exit 0 on success; otherwise the error name on stderr and exit 1. |
 | `elogctl describe-topic <name>` | | One JSON object: `name`, `partitions[]` with `partition`, `leader`, `leaderEpoch`, `replicas`, `isr`, `highWatermark` (read from the leader; −1 if unreachable). |
 | `elogctl dump <topic> <partition> [--from N]` | `--from 0` | One JSON object per committed record, `{"offset", "key", "pid", "seq"}`, from offset `N` (R-19) up to the HW at start. |
@@ -2352,7 +2353,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-21 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-22 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2377,6 +2378,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-19 | §12.1, §15.3 storage | `segment.bytes` ≥ 1 MiB; index locking, mid-batch reads by tools and the earliest offset after retention not specified | `segment.bytes` may be as small as 16 KiB; `SparseIndex::mu_` is a leaf lock; `elogctl dump --from N`; an `OFFSET_OUT_OF_RANGE` fetch response carries `highWatermark` and `logStartOffset`, and "earliest" means the log start. | F-STO-1 uses 64 KiB segments; readers look up the index while the writer appends; F-STO-2 starts mid-batch; F-STO-6 needs a consumer at 0 to land on the new log start. |
 | R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` (or a closed connection) at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
 | R-21 | §10.6 consumer, §13.1 processed log | Processed ranges flushed "regularly" | A `beforeCommit` hook runs before every OffsetCommit; `elog-consumer` flushes its processed ranges there. | After a SIGKILL the next consumer resumes from the committed offset; if the processed log lagged the commit, the analysis would report records that were processed as skipped. |
+| R-22 | §16.2 E7, §15.3 fencing tests | "Callback sleep" consumer capacity not given a knob | `elog-consumer --process-us N` sleeps N µs per record in the callback. | E7 needs a known consumer capacity; F-FEN-1 needs a zombie that still holds unprocessed records when it wakes, so its stale commit is certain. |
 
 ---
 
