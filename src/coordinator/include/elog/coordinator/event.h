@@ -32,7 +32,10 @@ struct PushResultEvent {
     ErrorCode error = ErrorCode::NONE;
 };
 
+// The coordinator is stopping: answer every pending JoinGroup (R-20).
+struct ShutdownEvent {};
+
 // Everything the event loop handles from its inbound queue.
-using LoopEvent = std::variant<RequestEvent, PushResultEvent>;
+using LoopEvent = std::variant<RequestEvent, PushResultEvent, ShutdownEvent>;
 
 }  // namespace elog

@@ -13,6 +13,11 @@ std::vector<ConfigKey> coordinatorConfigSchema() {
         ConfigKey::string("listen.host", "0.0.0.0"),
         ConfigKey::integer("listen.port", 9000, 1, 65535),
         ConfigKey::string("db.path", "./coordinator.db"),
+        ConfigKey::string("metrics.dir", "./metrics"),
+        // R-20: roundrobin until the sticky assignor exists.
+        ConfigKey::choice("group.default.assignor", "roundrobin", {"roundrobin"}),
+        ConfigKey::integer("group.min.session.timeout.ms", 1000, 1, 3'600'000),
+        ConfigKey::integer("group.max.session.timeout.ms", 60'000, 1, 3'600'000),
         ConfigKey::integer("coordinator.tick.ms", 100, 10, 1000),
         ConfigKey::integer("inbound.queue.capacity", 10'000, 1, 1'000'000),
         ConfigKey::integer("queue.admission.ms", 1000, 0, 60'000),
@@ -33,6 +38,12 @@ CoordinatorConfig CoordinatorConfig::from(const Config& config) {
     cfg.server.connectionIdle = config.getMs("connection.idle.ms");
     cfg.server.requestTimeout = config.getMs("request.timeout.ms");
     cfg.dbPath = config.getString("db.path");
+    cfg.metricsDir = config.getString("metrics.dir");
+    cfg.groups.defaultAssignor = config.getString("group.default.assignor");
+    cfg.groups.minSessionTimeoutMs =
+        static_cast<std::uint32_t>(config.getInt("group.min.session.timeout.ms"));
+    cfg.groups.maxSessionTimeoutMs =
+        static_cast<std::uint32_t>(config.getInt("group.max.session.timeout.ms"));
     cfg.tick = config.getMs("coordinator.tick.ms");
     cfg.inboundQueueCapacity = static_cast<std::size_t>(config.getInt("inbound.queue.capacity"));
     cfg.queueAdmission = config.getMs("queue.admission.ms");

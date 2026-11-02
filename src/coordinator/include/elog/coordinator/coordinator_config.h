@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "elog/common/config.h"
+#include "elog/coordinator/group_manager.h"
 #include "elog/protocol/frame_server.h"
 
 namespace elog {
@@ -19,6 +20,8 @@ std::vector<ConfigKey> coordinatorConfigSchema();
 struct CoordinatorConfig {
     FrameServerConfig server;  // listen address and connection limits
     std::string dbPath;
+    std::string metricsDir;  // events-coordinator.csv (R-20)
+    GroupConfig groups;
     std::chrono::milliseconds tick{0};  // event-loop tick period
     std::size_t inboundQueueCapacity = 0;
     std::chrono::milliseconds queueAdmission{0};        // wait for queue space, then THROTTLED

@@ -16,11 +16,12 @@ constexpr TimeMs kPushRetryDelayMs = 500;  // R-15
 
 }  // namespace
 
-EventLoop::EventLoop(std::chrono::milliseconds tick, std::chrono::milliseconds brokerSessionTimeout,
-                     Repository& repo, BrokerPusher& pusher)
-    : tick_(tick),
+EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPusher& pusher,
+                     EventLog& events)
+    : tick_(cfg.tick),
       meta_(repo),
-      brokers_(repo, brokerSessionTimeout),
+      brokers_(repo, cfg.brokerSessionTimeout),
+      groups_(repo, events, cfg.groups),
       pusher_(pusher),
       controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
 
@@ -53,6 +54,10 @@ void EventLoop::run(BoundedQueue<LoopEvent>& inbound) {
 // an answer.
 void EventLoop::handle(RequestEvent& event) {
     try {
+        if (event.frame.apiKey == ApiKey::JoinGroup) {  // answered when the rebalance ends
+            groups_.onJoin(event.frame, event.reply, time::monotonicMs());
+            return;
+        }
         event.reply->complete(dispatch(event.frame));
         pushNewRoles();
     } catch (const std::exception& e) {
@@ -67,6 +72,10 @@ void EventLoop::handle(RequestEvent& event) {
 // incarnation. A broker that re-registered gets a full push anyway.
 void EventLoop::handle(const PushResultEvent& event) {
     pushRetries_[event.broker] = {event.incarnation, time::monotonicMs() + kPushRetryDelayMs};
+}
+
+void EventLoop::handle(const ShutdownEvent&) {
+    groups_.failPendingJoins();
 }
 
 // R-15: a registered broker gets every partition it hosts (possibly none: it then knows it

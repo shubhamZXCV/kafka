@@ -5,6 +5,7 @@ add_library(elog_coordinator_lib STATIC
     broker_liveness.cc
     broker_pusher.cc
     event_loop.cc
+    group_manager.cc
     metadata_manager.cc
     repository.cc
     schema.cc)

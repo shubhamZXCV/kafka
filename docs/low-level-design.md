@@ -1423,7 +1423,7 @@ def removeMember(g, m, cause, complete=True):
 
 A member blocked in `JoinGroup` (with `pendingJoin` set) is not evicted for missing heartbeats. Its liveness is covered by the rebalance timeout.
 
-When the coordinator stops, every pending join is answered `UNKNOWN_SERVER_ERROR` so that no connection thread waits forever; the consumer rejoins once the coordinator is back (R-20).
+When the coordinator stops, every pending join is answered `UNKNOWN_SERVER_ERROR` so that no connection thread waits forever (the client may instead see its connection close, since sockets are shut down at the same time); either way the consumer rejoins once the coordinator is back (R-20).
 
 ### 7.4 Offset Commit and Fetch
 
@@ -2372,7 +2372,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-17 | §6.2 fetch credit | Fetch whenever credit > 0 | Fetch only once `max(1, Q/2)` slots are free (or the queue is empty); sequential per-leader long-polls documented as a latency limitation for idle multi-leader assignments. | With credit = one free slot, a busy consumer sent one-record fetches (20 000 records took 14 s at Q=50). |
 | R-18 | §15.2 tools | Commands listed, flags and outputs not specified | Flags, defaults, exit codes and output formats of `elog-producer`, `elog-consumer` and `elogctl` as tabled in §15.2. | Tests and experiment scripts drive the tools and parse their output, so both must be fixed. |
 | R-19 | §12.1, §15.3 storage | `segment.bytes` ≥ 1 MiB; index locking, mid-batch reads by tools and the earliest offset after retention not specified | `segment.bytes` may be as small as 16 KiB; `SparseIndex::mu_` is a leaf lock; `elogctl dump --from N`; an `OFFSET_OUT_OF_RANGE` fetch response carries `highWatermark` and `logStartOffset`, and "earliest" means the log start. | F-STO-1 uses 64 KiB segments; readers look up the index while the writer appends; F-STO-2 starts mid-batch; F-STO-6 needs a consumer at 0 to land on the new log start. |
-| R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
+| R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` (or a closed connection) at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
 
 ---
 

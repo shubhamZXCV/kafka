@@ -24,8 +24,14 @@ int CoordinatorServer::run() {
             ->error("db_open_failed path={} error=\"{}\"", cfg_.dbPath, repo.message());
         return 1;
     }
+    auto events = EventLog::open(cfg_.metricsDir, "coordinator");
+    if (!events.ok()) {
+        logging::get("coordinator")
+            ->error("events_open_failed dir={} error=\"{}\"", cfg_.metricsDir, events.message());
+        return 1;
+    }
     BrokerPusher pusher(inbound_);
-    EventLoop loop(cfg_.tick, cfg_.brokerSessionTimeout, *repo.value(), pusher);
+    EventLoop loop(cfg_, *repo.value(), pusher, *events.value());
     if (auto status = loop.load(); !status.ok()) {
         logging::get("coordinator")->error("load_failed error=\"{}\"", status.message());
         return 1;
@@ -43,7 +49,11 @@ int CoordinatorServer::run() {
     return exitCode;
 }
 
+// Connection threads waiting for a deferred JoinGroup reply only finish once the loop has
+// answered it, so the loop is told first, and the answer usually reaches the client before
+// its socket is shut down (R-20).
 void CoordinatorServer::shutdown() {
+    inbound_.push(ShutdownEvent{}, std::chrono::milliseconds(1000));
     server_.shutdown();
 }
 
