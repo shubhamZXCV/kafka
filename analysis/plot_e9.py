@@ -15,7 +15,7 @@ import numpy as np
 from elog_analysis import plotting
 from elog_analysis.loaders import load_metrics, load_phases, load_run
 from elog_analysis.summary import write_summary
-from elog_analysis.timing import backlog, consume_rate
+from elog_analysis.timing import backlog, consume_rate, drain_window
 from plot_e2 import kill_measurements
 
 TOLERANCE = 0.25
@@ -34,9 +34,9 @@ def main(run_dir):
     lag, t0, end = backlog(metrics), load_phases(run_dir)["warmup"], m["rebalance_end_ms"]
     # What the survivors actually processed while a backlog remained: their capacity under
     # this load, to compare with the calibrated one in the prediction.
-    rate_now = consume_rate(metrics)
-    draining = lag[(lag.index > (end or 0)) & (lag > 2 * lag[lag.index < m["kill_ms"]].median())]
-    survivors_rate = rate_now.reindex(draining.index).mean() if len(draining) else None
+    steady = lag[(lag.index >= m["kill_ms"] - 20_000) & (lag.index < m["kill_ms"])].median()
+    window = drain_window(lag, end, steady) if end else lag.iloc[:0]
+    survivors_rate = consume_rate(metrics).reindex(window.index).mean() if len(window) else None
     fig, ax = plotting.figure("E9 · backlog drain after a consumer kill",
                               "time since start (s)", "records (acked, not yet processed)")
     ax.plot((lag.index - t0) / 1000, lag.values, label="backlog")

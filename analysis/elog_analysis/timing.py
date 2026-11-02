@@ -102,16 +102,22 @@ def backlog(metrics):
     return acked.reindex(index).ffill().fillna(0) - done.reindex(index).ffill().fillna(0)
 
 
-def drain_rate(lag, start_ms, baseline=0.0, done=0.1):
-    """E9: records/s by which a lag series (backlog or total_lag) falls after start_ms (the
-    rebalance end): minus the least-squares slope from start_ms until the lag is back within
-    `done` of the way from its value at start_ms to `baseline` (the steady-state lag before
-    the fault), or to the end. Negative if it grows; None with fewer than 3 samples."""
+def drain_window(lag, start_ms, baseline=0.0, done=0.1):
+    """The part of a lag series a drain is measured over: from start_ms (the rebalance end)
+    until the lag is back within `done` of the way from its value at start_ms to `baseline`
+    (the steady-state lag before the fault), or to the end."""
     lag = lag[lag.index >= start_ms - start_ms % 1000]
-    if len(lag) < 3:
-        return None
+    if lag.empty:
+        return lag
     drained = lag[lag <= baseline + done * (lag.iloc[0] - baseline)]
-    window = lag.loc[:drained.index[0]] if not drained.empty else lag
+    return lag.loc[:drained.index[0]] if not drained.empty else lag
+
+
+def drain_rate(lag, start_ms, baseline=0.0, done=0.1):
+    """E9: records/s by which a lag series (backlog or total_lag) falls over its
+    drain_window: minus the least-squares slope. Negative if it grows; None with fewer than
+    3 samples."""
+    window = drain_window(lag, start_ms, baseline, done)
     if len(window) < 3:
         return None
     slope = np.polyfit((window.index - window.index[0]) / 1000.0, window.to_numpy(), 1)[0]
