@@ -58,6 +58,13 @@ struct FetchData {
     std::uint32_t recordCount = 0;
 };
 
+// What a follower gets back from one replica fetch (LLD §6.7).
+struct ReplicaFetchData {
+    Offset highWatermark = 0;
+    Offset leaderLeo = 0;
+    std::vector<std::byte> records;  // whole batches from the follower's LEO
+};
+
 // The largest max.pending.produce allowed (LLD §12.1).
 inline constexpr std::ptrdiff_t kMaxPendingProduce = 10'000;
 
@@ -117,6 +124,13 @@ public:
     // outside [logStartOffset, HW].
     Result<FetchData> readForConsumer(Offset from, std::uint32_t credit, std::size_t maxBytes,
                                       Epoch requestEpoch);
+
+    // A follower's fetch (LLD §6.7): records its progress (fetchOffset is its LEO and
+    // acknowledges everything below), re-evaluates HW, and returns whole batches up to our
+    // LEO. FENCED_LEADER_EPOCH unless we lead at exactly requestEpoch; OFFSET_OUT_OF_RANGE
+    // if the follower is ahead of us (it must truncate).
+    Result<ReplicaFetchData> readForFollower(BrokerId follower, Offset fetchOffset,
+                                             std::size_t maxBytes, Epoch requestEpoch, TimeMs now);
 
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }

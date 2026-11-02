@@ -39,6 +39,8 @@ struct BrokerConfig {
     std::chrono::milliseconds produceThrottleHint{0};  // throttleMs sent with THROTTLED (R-12)
     std::size_t fetchMaxBytes = 0;                     // caps a fetch's maxBytes
     std::chrono::milliseconds fetchMaxWait{0};         // caps a fetch's maxWaitMs
+    std::size_t replicaFetchMaxBytes = 0;              // replica.fetch.max.bytes
+    std::chrono::milliseconds replicaFetchWait{0};     // replica.fetch.wait.ms
 
     // `config` must have been loaded with brokerConfigSchema().
     static BrokerConfig from(const Config& config);

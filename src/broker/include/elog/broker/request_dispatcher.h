@@ -2,6 +2,7 @@
 
 #include "elog/broker/fetch_handler.h"
 #include "elog/broker/produce_handler.h"
+#include "elog/broker/replica_fetch_handler.h"
 #include "elog/protocol/frame.h"
 
 namespace elog {
@@ -13,8 +14,8 @@ namespace elog {
 // state of its own, and the handlers it calls are safe to call concurrently.
 class RequestDispatcher {
 public:
-    RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch, ReplicaManager& replicas,
-                      BrokerId self);
+    RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch,
+                      ReplicaFetchHandler& replicaFetch, ReplicaManager& replicas, BrokerId self);
 
     Frame dispatch(const Frame& request);
 
@@ -22,9 +23,11 @@ private:
     Frame handleProduce(const Frame& request);
     Frame handleFetch(const Frame& request);
     Frame handleLeaderAndIsr(const Frame& request);
+    Frame handleReplicaFetch(const Frame& request);
 
     ProduceHandler& produce_;
     FetchHandler& fetch_;
+    ReplicaFetchHandler& replicaFetch_;
     ReplicaManager& replicas_;
     const BrokerId self_;
 };

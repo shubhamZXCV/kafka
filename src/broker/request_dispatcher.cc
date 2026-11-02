@@ -9,8 +9,13 @@
 namespace elog {
 
 RequestDispatcher::RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch,
-                                     ReplicaManager& replicas, BrokerId self)
-    : produce_(produce), fetch_(fetch), replicas_(replicas), self_(self) {}
+                                     ReplicaFetchHandler& replicaFetch, ReplicaManager& replicas,
+                                     BrokerId self)
+    : produce_(produce),
+      fetch_(fetch),
+      replicaFetch_(replicaFetch),
+      replicas_(replicas),
+      self_(self) {}
 
 Frame RequestDispatcher::dispatch(const Frame& request) {
     switch (request.apiKey) {
@@ -20,6 +25,8 @@ Frame RequestDispatcher::dispatch(const Frame& request) {
             return handleFetch(request);
         case ApiKey::LeaderAndIsr:
             return handleLeaderAndIsr(request);
+        case ApiKey::ReplicaFetch:
+            return handleReplicaFetch(request);
         default:
             break;
     }
@@ -60,6 +67,16 @@ Frame RequestDispatcher::handleLeaderAndIsr(const Frame& request) {
         return encodeErrorResponse(request, leaderAndIsr.error());
     }
     return encode(replicas_.applyLeaderAndIsr(leaderAndIsr.value(), self_), request.correlationId);
+}
+
+Frame RequestDispatcher::handleReplicaFetch(const Frame& request) {
+    auto fetch = decodeReplicaFetchRequest(request);
+    if (!fetch.ok()) {
+        logging::get("broker")->warn("bad_request api=ReplicaFetch correlation={} error=\"{}\"",
+                                     request.correlationId, fetch.message());
+        return encodeErrorResponse(request, fetch.error());
+    }
+    return encode(replicaFetch_.handle(fetch.value()), request.correlationId);
 }
 
 }  // namespace elog

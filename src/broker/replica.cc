@@ -125,6 +125,7 @@ Result<AppendInfo> Replica::appendAsLeader(std::span<std::byte> batch, Epoch req
     auto info = log_->append(batch, leaderEpoch_, /*assignOffsets=*/true);
     if (info.ok()) {
         maybeAdvanceHw();
+        hwNotifier_.bump();  // followers long-poll for new LEO, not only for HW (LLD §6.7)
     }
     return info;
 }
@@ -160,6 +161,50 @@ Result<FetchData> Replica::readForConsumer(Offset from, std::uint32_t credit, st
 std::size_t Replica::applyRetention(TimeMs nowWallMs) {
     std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog (LLD §11.2)
     return log_->applyRetention(nowWallMs);
+}
+
+Result<ReplicaFetchData> Replica::readForFollower(BrokerId follower, Offset fetchOffset,
+                                                  std::size_t maxBytes, Epoch requestEpoch,
+                                                  TimeMs now) {
+    ReplicaFetchData out;
+    {
+        std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+        if (role_ != Role::LEADER || requestEpoch != leaderEpoch_) {
+            return {ErrorCode::FENCED_LEADER_EPOCH,
+                    "not the leader at epoch " + std::to_string(requestEpoch)};
+        }
+        const auto it = leader_->followers.find(follower);
+        if (it == leader_->followers.end()) {
+            return {ErrorCode::INVALID_REQUEST,
+                    "broker " + std::to_string(follower) + " is not a replica"};
+        }
+        out.leaderLeo = log_->leo();
+        if (fetchOffset > out.leaderLeo || fetchOffset < log_->logStartOffset()) {
+            return {ErrorCode::OFFSET_OUT_OF_RANGE, "follower must truncate"};
+        }
+        // LLD §6.7: caught up if it now has what we had at its previous fetch, or all of it.
+        FollowerProgress& f = it->second;
+        if (fetchOffset >= f.leaderLeoAtLastFetch) {
+            f.lastCaughtUpMs = f.lastFetchMs;
+        }
+        if (fetchOffset >= out.leaderLeo) {
+            f.lastCaughtUpMs = now;
+        }
+        f.leo = fetchOffset;
+        f.lastFetchMs = now;
+        f.leaderLeoAtLastFetch = out.leaderLeo;
+        maybeAdvanceHw();
+        out.highWatermark = hw();
+    }
+    // The read is lock-free; followers read up to our LEO, whole batches (LLD §5.4).
+    if (fetchOffset < out.leaderLeo) {
+        auto raw = log_->read(fetchOffset, out.leaderLeo, maxBytes);
+        if (!raw.ok()) {
+            return {raw.error(), raw.message()};
+        }
+        out.records = std::move(raw.value().batches);
+    }
+    return out;
 }
 
 Status Replica::awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch) {

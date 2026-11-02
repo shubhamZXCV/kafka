@@ -21,7 +21,8 @@ BrokerServer::BrokerServer(BrokerConfig cfg)
       replicas_(cfg_.dataDir, cfg_.log, cfg_.maxPendingProduce, hwNotifier_),
       produceHandler_(replicas_, cfg_),
       fetchHandler_(replicas_, hwNotifier_, cfg_),
-      dispatcher_(produceHandler_, fetchHandler_, replicas_, cfg_.brokerId),
+      replicaFetchHandler_(replicas_, hwNotifier_, cfg_),
+      dispatcher_(produceHandler_, fetchHandler_, replicaFetchHandler_, replicas_, cfg_.brokerId),
       agent_(cfg_),
       server_(
           serverConfig(cfg_),

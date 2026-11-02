@@ -40,6 +40,8 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("produce.throttle.hint.ms", 100, 1, 60'000),
         ConfigKey::integer("fetch.max.bytes", 1'048'576, 1024, 1 << 30),
         ConfigKey::integer("fetch.max.wait.ms", 500, 0, 60'000),
+        ConfigKey::integer("replica.fetch.max.bytes", 4'194'304, 1024, 1 << 30),
+        ConfigKey::integer("replica.fetch.wait.ms", 500, 0, 60'000),
     };
 }
 
@@ -78,6 +80,8 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.produceThrottleHint = config.getMs("produce.throttle.hint.ms");
     cfg.fetchMaxBytes = static_cast<std::size_t>(config.getInt("fetch.max.bytes"));
     cfg.fetchMaxWait = config.getMs("fetch.max.wait.ms");
+    cfg.replicaFetchMaxBytes = static_cast<std::size_t>(config.getInt("replica.fetch.max.bytes"));
+    cfg.replicaFetchWait = config.getMs("replica.fetch.wait.ms");
     return cfg;
 }
 
