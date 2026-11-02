@@ -3,9 +3,12 @@
 
     python3 analysis/plot_e5.py runs/<id>-e5
 
-Checks (SRS §9.1, the headline result): with fencing, 0 offset regressions and the
-zombie's stale commits rejected; without fencing (the control), at least one regression;
-no skipped record in either.
+Checks (SRS §9.1, the headline result): with fencing, 0 offset regressions and every
+stale commit rejected; without fencing (the control), a regression in every run whose
+zombie sent a stale commit; no skipped record in either. A stale commit is one the zombie
+sends after SIGCONT under its evicted member ID. Whether it sends one is a race: if its
+overdue heartbeat reports the eviction before its next commit is due, it drops its work
+and rejoins without committing. Each arm needs at least one run with a stale commit.
 """
 
 import sys
@@ -22,12 +25,29 @@ from elog_analysis.timing import load_faults
 ARMS = ["fenced", "unfenced"]
 
 
+def stale_commits(events, resume_ms):
+    """Commit entries the zombie sent after waking, under its evicted member ID, accepted
+    or fenced."""
+    evicted = set(events[events["event"] == "member_evicted"]["member"])
+    sent = events[events["event"].isin(["commit_accepted", "commit_fenced"])
+                  & events["member"].isin(evicted) & (events["ts_ms"] > resume_ms)]
+    return len(sent)
+
+
+def sent(arm_runs):
+    """How many of an arm's runs sent at least one stale commit."""
+    return int((arm_runs["stale_commits"] > 0).sum())
+
+
 def collect(sweep_dir):
     rows = []
     for run_dir in sorted(p for p in Path(sweep_dir).iterdir() if (p / "faults.csv").exists()):
         events, processed = load_events(run_dir), load_processed(run_dir)
         fenced = load_run(run_dir)["params"]["fencing"] == "true"
+        faults = load_faults(run_dir)
+        resume = int(faults[faults["action"] == "resume"]["ts_ms"].iloc[0])
         rows.append({"run": run_dir.name, "arm": "fenced" if fenced else "unfenced",
+                     "stale_commits": stale_commits(events, resume),
                      "regressions": count_offset_regressions(events)[0],
                      "fenced_commits": int((events["event"] == "commit_fenced").sum()),
                      "duplicates": count_duplicates(processed)[0],
@@ -56,7 +76,8 @@ def main(sweep_dir):
     sweep_dir = Path(sweep_dir)
     runs = collect(sweep_dir)
     runs.drop(columns=["path"]).to_csv(sweep_dir / "e5_runs.csv", index=False)
-    totals = runs.groupby("arm")[["regressions", "fenced_commits", "duplicates", "skips"]].sum()
+    totals = runs.groupby("arm")[["stale_commits", "regressions", "fenced_commits",
+                                  "duplicates", "skips"]].sum()
 
     fig, ax = plotting.figure("E5 · offset regressions (all runs)", "", "regressions")
     ax.bar(["fencing on", "fencing OFF (control)"],
@@ -69,15 +90,21 @@ def main(sweep_dir):
         plot_commits(runs[runs["arm"] == arm].iloc[0]["path"], ax, title)
     plotting.save(fig, sweep_dir / "e5_commits.png")
 
+    fenced, unfenced = (runs[runs["arm"] == arm] for arm in ARMS)
     checks = {
         "fenced: 0 regressions (SRS §9.1)": (totals.loc["fenced", "regressions"] == 0,
                                             f"{totals.loc['fenced', 'regressions']}"),
-        "fenced: stale commits rejected": (
-            (runs[runs["arm"] == "fenced"]["fenced_commits"] > 0).all(),
-            f"{totals.loc['fenced', 'fenced_commits']} commit_fenced in total"),
+        "fenced: every stale commit rejected": (
+            totals.loc["fenced", "stale_commits"] > 0
+            and (fenced["fenced_commits"] == fenced["stale_commits"]).all(),
+            f"{totals.loc['fenced', 'fenced_commits']} of "
+            f"{totals.loc['fenced', 'stale_commits']} rejected; "
+            f"{sent(fenced)} of {len(fenced)} runs sent one"),
         "unfenced control: regressions > 0": (
-            (runs[runs["arm"] == "unfenced"]["regressions"] > 0).all(),
-            f"{totals.loc['unfenced', 'regressions']} in total"),
+            totals.loc["unfenced", "stale_commits"] > 0
+            and (unfenced[unfenced["stale_commits"] > 0]["regressions"] > 0).all(),
+            f"{totals.loc['unfenced', 'regressions']} in total; "
+            f"{sent(unfenced)} of {len(unfenced)} runs sent a stale commit"),
         "no skipped records (INV-05)": (totals["skips"].sum() == 0,
                                         f"{totals['skips'].sum()} partitions with gaps"),
     }
