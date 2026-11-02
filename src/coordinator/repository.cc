@@ -1,6 +1,7 @@
 #include "elog/coordinator/repository.h"
 
 #include <exception>
+#include <map>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -296,6 +297,41 @@ Result<std::optional<Offset>> Repository::committedOffset(const std::string& gro
     const auto offset = static_cast<Offset>(s.columnInt(0));
     s.reset();
     return std::optional<Offset>{offset};
+}
+
+Result<std::vector<GroupRecord>> Repository::loadGroups() {
+    auto groups = db_->prepare("SELECT group_id, generation, assignor FROM consumer_group");
+    if (!groups.ok()) {
+        return {groups.error(), groups.message()};
+    }
+    std::map<std::string, GroupRecord> byId;
+    auto status = forEachRow(*groups.value(), [&](Stmt& s) {
+        byId[s.columnText(0)] = {
+            s.columnText(0), static_cast<Generation>(s.columnInt(1)), s.columnText(2), {}};
+    });
+    if (!status.ok()) {
+        return {status.error(), status.message()};
+    }
+    auto rows = db_->prepare(
+        "SELECT group_id, topic, partition, owner_member, owner_epoch FROM partition_ownership");
+    if (!rows.ok()) {
+        return {rows.error(), rows.message()};
+    }
+    status = forEachRow(*rows.value(), [&](Stmt& s) {
+        if (const auto it = byId.find(s.columnText(0)); it != byId.end()) {
+            it->second.ownership.push_back(
+                {{s.columnText(1), static_cast<std::uint32_t>(s.columnInt(2))},
+                 {s.columnText(3), static_cast<Epoch>(s.columnInt(4))}});
+        }
+    });
+    if (!status.ok()) {
+        return {status.error(), status.message()};
+    }
+    std::vector<GroupRecord> out;
+    for (auto& [id, group] : byId) {
+        out.push_back(std::move(group));
+    }
+    return out;
 }
 
 }  // namespace elog

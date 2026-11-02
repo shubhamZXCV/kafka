@@ -31,6 +31,11 @@ class GroupManager {
 public:
     GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events, GroupConfig cfg);
 
+    // LLD §7.6: groups come back Empty with their generation and ownership, so the next
+    // rebalance produces generation + 1 and epochs keep increasing (INV-08). Called once,
+    // before the loop starts.
+    Status load();
+
     void onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now);
     Frame onHeartbeat(const Frame& request, TimeMs now);
     Frame onLeave(const Frame& request, TimeMs now);

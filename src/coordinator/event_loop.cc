@@ -27,7 +27,10 @@ EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPushe
       controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
 
 Status EventLoop::load() {
-    return meta_.load();
+    if (auto status = meta_.load(); !status.ok()) {
+        return status;
+    }
+    return groups_.load();
 }
 
 // R-13: wait for a request only until the next tick is due, and check the tick deadline

@@ -38,6 +38,14 @@ struct OwnershipChange {
     Epoch epoch = 0;
 };
 
+// One persisted group (LLD §7.6): its generation, assignor and ownership rows.
+struct GroupRecord {
+    std::string groupId;
+    Generation generation = 0;
+    std::string assignor;
+    std::vector<std::pair<TopicPartition, std::pair<MemberId, Epoch>>> ownership;
+};
+
 // Every SQL statement the coordinator runs (LLD §8). Each write is one transaction, and the
 // caller changes its in-memory state only after it succeeds, so memory is never ahead of
 // disk (LLD §8.5).
@@ -60,6 +68,7 @@ public:
                           const std::vector<OwnershipChange>& diff);
     Status commitOffsetUnfenced(const std::string& groupId, const TopicPartition& tp, Offset offset,
                                 Epoch epoch, TimeMs nowMs);
+    Result<std::vector<GroupRecord>> loadGroups();
     // The committed offset, or nullopt if none.
     Result<std::optional<Offset>> committedOffset(const std::string& groupId,
                                                   const TopicPartition& tp);

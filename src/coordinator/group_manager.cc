@@ -26,6 +26,24 @@ GroupManager::GroupManager(Repository& repo, const MetadataManager& meta, EventL
                            GroupConfig cfg)
     : repo_(repo), meta_(meta), events_(events), cfg_(std::move(cfg)) {}
 
+Status GroupManager::load() {
+    auto groups = repo_.loadGroups();
+    if (!groups.ok()) {
+        return {groups.error(), groups.message()};
+    }
+    for (GroupRecord& record : groups.value()) {
+        Group& group = groups_[record.groupId];
+        group.id = record.groupId;
+        group.generation = record.generation;
+        group.assignor = record.assignor;
+        for (const auto& [tp, ownership] : record.ownership) {
+            group.ownership[tp] = {ownership.first, ownership.second};
+        }
+    }
+    logging::get("coordinator")->info("groups_loaded count={}", groups_.size());
+    return okStatus();
+}
+
 // LLD §7.3 onJoin: parse → validate → act (the reply waits for the rebalance).
 void GroupManager::onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now) {
     auto join = decodeJoinGroupRequest(request);
