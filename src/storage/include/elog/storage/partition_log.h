@@ -13,6 +13,7 @@
 
 #include "elog/common/result.h"
 #include "elog/common/types.h"
+#include "elog/storage/leader_epoch_cache.h"
 #include "elog/storage/segment.h"
 
 namespace elog {
@@ -83,13 +84,20 @@ public:
     // deleted. Caller holds Replica::mu_, like every other log mutation. Returns how many.
     std::size_t applyRetention(TimeMs nowWallMs);
 
+    // LLD §5.5: drops every record at or after `offset`, on a batch boundary (a batch that
+    // contains `offset` is kept whole). Caller holds Replica::mu_ and never truncates below
+    // the HW. Trims the leader-epoch cache to match.
+    Status truncateTo(Offset offset);
+
+    LeaderEpochCache& epochCache() { return *epochCache_; }
+
     // Everything below this offset is known to be on disk; recovery scans from here.
     Offset recoveryPoint() const { return recoveryPoint_.load(std::memory_order_acquire); }
     std::size_t segmentCount() const;
 
 private:
     PartitionLog(std::string dir, LogConfig cfg, std::vector<std::shared_ptr<Segment>> segments,
-                 Offset leo);
+                 Offset leo, std::unique_ptr<LeaderEpochCache> epochCache);
     static Result<std::vector<std::shared_ptr<Segment>>> openSegments(const std::string& dir,
                                                                       const LogConfig& cfg);
     static Result<Offset> recover(std::vector<std::shared_ptr<Segment>>& segments,
@@ -108,6 +116,7 @@ private:
     std::atomic<Offset> leo_{0};
     std::atomic<Offset> logStart_{0};
     std::atomic<Offset> recoveryPoint_{0};
+    std::unique_ptr<LeaderEpochCache> epochCache_;  // used under Replica::mu_
 };
 
 }  // namespace elog

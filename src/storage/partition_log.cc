@@ -21,8 +21,12 @@ constexpr std::size_t kMaxSegmentsSyncedOneByOne = 4;
 }  // namespace
 
 PartitionLog::PartitionLog(std::string dir, LogConfig cfg,
-                           std::vector<std::shared_ptr<Segment>> segments, Offset leo)
-    : dir_(std::move(dir)), cfg_(cfg), segments_(std::move(segments)) {
+                           std::vector<std::shared_ptr<Segment>> segments, Offset leo,
+                           std::unique_ptr<LeaderEpochCache> epochCache)
+    : dir_(std::move(dir)),
+      cfg_(cfg),
+      segments_(std::move(segments)),
+      epochCache_(std::move(epochCache)) {
     logStart_.store(segments_.front()->baseOffset(), std::memory_order_release);
     leo_.store(leo, std::memory_order_release);
     recoveryPoint_.store(leo, std::memory_order_release);  // everything left was verified
@@ -43,8 +47,16 @@ Result<std::unique_ptr<PartitionLog>> PartitionLog::open(const std::string& dir,
     if (!leo.ok()) {
         return {leo.error(), leo.message()};
     }
-    return std::unique_ptr<PartitionLog>(
-        new PartitionLog(dir, cfg, std::move(segments).value(), leo.value()));
+    auto epochCache = LeaderEpochCache::open(dir);
+    if (!epochCache.ok()) {
+        return {epochCache.error(), epochCache.message()};
+    }
+    // LLD §5.6: epochs past the recovered end belong to records that are gone.
+    if (auto status = epochCache.value()->truncateFromEnd(leo.value()); !status.ok()) {
+        return {status.error(), status.message()};
+    }
+    return std::unique_ptr<PartitionLog>(new PartitionLog(
+        dir, cfg, std::move(segments).value(), leo.value(), std::move(epochCache).value()));
 }
 
 // The .log files of `dir` in offset order, or a new segment 0 if there are none.
@@ -159,6 +171,14 @@ Result<AppendInfo> PartitionLog::append(std::span<std::byte> batchBytes, Epoch e
             return {status.error(), status.message()};
         }
     }
+    // LLD §5.3: the first batch of a new epoch records where that epoch starts.
+    if (epochCache_->latestEpoch() != view.value().leaderEpoch()) {
+        if (auto status =
+                epochCache_->assign(view.value().leaderEpoch(), view.value().baseOffset());
+            !status.ok()) {
+            return {status.error(), status.message()};
+        }
+    }
     Segment& active = *segments_.back();
     const auto relative =
         static_cast<std::uint32_t>(view.value().baseOffset() - active.baseOffset());
@@ -230,7 +250,64 @@ std::size_t PartitionLog::applyRetention(TimeMs nowWallMs) {
                                       oldest->baseOffset(), logStartOffset());
         ++deleted;
     }
+    if (deleted > 0) {
+        if (auto status = epochCache_->truncateFromStart(logStartOffset()); !status.ok()) {
+            logging::get("storage")->error("epoch_cache_failed dir={} error=\"{}\"", dir_,
+                                           status.message());
+        }
+    }
     return deleted;
+}
+
+Status PartitionLog::truncateTo(Offset offset) {
+    if (offset >= leo()) {
+        return okStatus();
+    }
+    if (offset < logStartOffset()) {
+        return {ErrorCode::INVALID_REQUEST, "truncate below the log start"};
+    }
+    std::vector<std::shared_ptr<Segment>> dropped;
+    {
+        std::lock_guard lock(segMu_);  // lock order: Replica::mu_ → PartitionLog::segMu_
+        while (segments_.size() > 1 && segments_.back()->baseOffset() >= offset) {
+            dropped.push_back(segments_.back());
+            segments_.pop_back();
+        }
+    }
+    for (const auto& segment : dropped) {
+        std::filesystem::remove(segment->path());
+        std::filesystem::remove(segment->indexPath());
+    }
+    // Keep every batch that starts before `offset` (from the index floor on).
+    Segment& seg = *segments_.back();
+    std::uint32_t pos =
+        seg.index().floor(static_cast<std::uint32_t>(offset - seg.baseOffset())).position;
+    Offset end = pos == 0 ? seg.baseOffset() : offset;
+    std::vector<std::byte> header;
+    while (seg.size() - pos >= batch::kHeaderBytes) {
+        if (auto status = seg.readAt(pos, batch::kHeaderBytes, header); !status.ok()) {
+            return status;
+        }
+        const RecordBatchHeader h = readBatchHeader(header);
+        if (h.baseOffset >= offset) {
+            break;
+        }
+        end = h.baseOffset + h.lastOffsetDelta + 1;
+        pos += static_cast<std::uint32_t>(batch::kRecordBatchOverhead + h.batchLength);
+    }
+    if (auto status = seg.truncateToPos(pos); !status.ok()) {
+        return status;
+    }
+    if (auto status = seg.index().truncateAfterPos(pos); !status.ok()) {
+        return status;
+    }
+    if (auto status = epochCache_->truncateFromEnd(end); !status.ok()) {
+        return status;
+    }
+    leo_.store(end, std::memory_order_release);
+    recoveryPoint_.store(std::min(recoveryPoint(), end), std::memory_order_release);
+    logging::get("storage")->info("log_truncated dir={} to={}", dir_, end);
+    return okStatus();
 }
 
 Status PartitionLog::flush() {

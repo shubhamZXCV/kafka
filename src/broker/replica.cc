@@ -79,6 +79,11 @@ void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr,
     leaderEpoch_ = epoch;
     role_ = Role::LEADER;
     self_ = self;
+    // LLD §6.3: our epoch starts at our LEO.
+    if (auto status = log_->epochCache().assign(epoch, log_->leo()); !status.ok()) {
+        logging::get("broker")->error("epoch_cache_failed topic={} partition={} error=\"{}\"",
+                                      tp_.topic, tp_.partition, status.message());
+    }
     leader_ = LeaderState{std::move(isr), std::nullopt, {}, minIsr};
     for (BrokerId replica : replicas) {
         if (replica != self) {
