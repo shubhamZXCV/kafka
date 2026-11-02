@@ -10,11 +10,12 @@ namespace elog {
 
 RequestDispatcher::RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch,
                                      ReplicaFetchHandler& replicaFetch, ReplicaManager& replicas,
-                                     BrokerId self)
+                                     ReplicaFetcherManager& fetchers, BrokerId self)
     : produce_(produce),
       fetch_(fetch),
       replicaFetch_(replicaFetch),
       replicas_(replicas),
+      fetchers_(fetchers),
       self_(self) {}
 
 Frame RequestDispatcher::dispatch(const Frame& request) {
@@ -66,7 +67,9 @@ Frame RequestDispatcher::handleLeaderAndIsr(const Frame& request) {
                                      request.correlationId, leaderAndIsr.message());
         return encodeErrorResponse(request, leaderAndIsr.error());
     }
-    return encode(replicas_.applyLeaderAndIsr(leaderAndIsr.value(), self_), request.correlationId);
+    const LeaderAndIsrResponse response = replicas_.applyLeaderAndIsr(leaderAndIsr.value(), self_);
+    fetchers_.reconcile(leaderAndIsr.value().brokers);  // LLD §6.3: follow the new leaders
+    return encode(response, request.correlationId);
 }
 
 Frame RequestDispatcher::handleReplicaFetch(const Frame& request) {

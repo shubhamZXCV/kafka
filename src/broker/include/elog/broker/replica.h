@@ -65,6 +65,14 @@ struct ReplicaFetchData {
     std::vector<std::byte> records;  // whole batches from the follower's LEO
 };
 
+// A follower's view for its fetcher thread (LLD §6.8).
+struct FollowerView {
+    BrokerId leader = -1;
+    Epoch leaderEpoch = 0;
+    Offset leo = 0;
+    FollowerState state = FollowerState::TRUNCATING;
+};
+
 // The largest max.pending.produce allowed (LLD §12.1).
 inline constexpr std::ptrdiff_t kMaxPendingProduce = 10'000;
 
@@ -132,6 +140,13 @@ public:
     Result<ReplicaFetchData> readForFollower(BrokerId follower, Offset fetchOffset,
                                              std::size_t maxBytes, Epoch requestEpoch, TimeMs now);
 
+    // The follower side (LLD §6.8), called by this partition's ReplicaFetcherThread.
+    std::optional<FollowerView> followerView() const;  // none while leading
+    void setFollowerState(Epoch epoch, FollowerState state);
+    // Appends the leader's batches as they are (offsets already assigned) and sets
+    // HW = min(leaderHw, LEO). Ignored unless still following at `epoch`.
+    Status appendAsFollower(std::span<std::byte> batches, Offset leaderHw, Epoch epoch);
+
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }
 
@@ -151,7 +166,7 @@ private:
     void maybeAdvanceHw();                                   // requires mu_
 
     const TopicPartition tp_;
-    std::mutex mu_;
+    mutable std::mutex mu_;
     std::condition_variable hwCv_;  // signalled on HW and role changes; waits hold mu_
     Role role_ = Role::FOLLOWER;
     Epoch leaderEpoch_ = 0;

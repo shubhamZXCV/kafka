@@ -22,7 +22,9 @@ BrokerServer::BrokerServer(BrokerConfig cfg)
       produceHandler_(replicas_, cfg_),
       fetchHandler_(replicas_, hwNotifier_, cfg_),
       replicaFetchHandler_(replicas_, hwNotifier_, cfg_),
-      dispatcher_(produceHandler_, fetchHandler_, replicaFetchHandler_, replicas_, cfg_.brokerId),
+      fetchers_(replicas_, cfg_),
+      dispatcher_(produceHandler_, fetchHandler_, replicaFetchHandler_, replicas_, fetchers_,
+                  cfg_.brokerId),
       agent_(cfg_),
       server_(
           serverConfig(cfg_),
@@ -39,6 +41,7 @@ int BrokerServer::run() {
     agent_.start();
     const int exitCode = server_.run();
     agent_.stop();
+    fetchers_.stopAll();
     scheduler_.stop();
     // LLD §6.2: a clean stop leaves everything flushed and checkpointed.
     replicas_.flushLogs();

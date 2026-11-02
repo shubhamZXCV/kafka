@@ -3,6 +3,7 @@
 #include "elog/broker/fetch_handler.h"
 #include "elog/broker/produce_handler.h"
 #include "elog/broker/replica_fetch_handler.h"
+#include "elog/broker/replica_fetcher.h"
 #include "elog/protocol/frame.h"
 
 namespace elog {
@@ -15,7 +16,8 @@ namespace elog {
 class RequestDispatcher {
 public:
     RequestDispatcher(ProduceHandler& produce, FetchHandler& fetch,
-                      ReplicaFetchHandler& replicaFetch, ReplicaManager& replicas, BrokerId self);
+                      ReplicaFetchHandler& replicaFetch, ReplicaManager& replicas,
+                      ReplicaFetcherManager& fetchers, BrokerId self);
 
     Frame dispatch(const Frame& request);
 
@@ -29,6 +31,7 @@ private:
     FetchHandler& fetch_;
     ReplicaFetchHandler& replicaFetch_;
     ReplicaManager& replicas_;
+    ReplicaFetcherManager& fetchers_;
     const BrokerId self_;
 };
 

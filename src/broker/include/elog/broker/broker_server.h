@@ -7,6 +7,7 @@
 #include "elog/broker/hw_notifier.h"
 #include "elog/broker/produce_handler.h"
 #include "elog/broker/replica_fetch_handler.h"
+#include "elog/broker/replica_fetcher.h"
 #include "elog/broker/replica_manager.h"
 #include "elog/broker/request_dispatcher.h"
 #include "elog/protocol/frame_server.h"
@@ -37,6 +38,7 @@ private:
     ProduceHandler produceHandler_;
     FetchHandler fetchHandler_;
     ReplicaFetchHandler replicaFetchHandler_;
+    ReplicaFetcherManager fetchers_;
     RequestDispatcher dispatcher_;
     CoordinatorAgent agent_;
     BrokerScheduler scheduler_;

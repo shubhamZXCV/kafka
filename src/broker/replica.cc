@@ -207,6 +207,45 @@ Result<ReplicaFetchData> Replica::readForFollower(BrokerId follower, Offset fetc
     return out;
 }
 
+std::optional<FollowerView> Replica::followerView() const {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ != Role::FOLLOWER || leaderId_ < 0) {
+        return std::nullopt;
+    }
+    return FollowerView{leaderId_, leaderEpoch_, log_->leo(), followerState_};
+}
+
+void Replica::setFollowerState(Epoch epoch, FollowerState state) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ == Role::FOLLOWER && leaderEpoch_ == epoch) {
+        followerState_ = state;
+    }
+}
+
+Status Replica::appendAsFollower(std::span<std::byte> batches, Offset leaderHw, Epoch epoch) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog (LLD §11.2)
+    if (role_ != Role::FOLLOWER || leaderEpoch_ != epoch) {
+        return okStatus();  // the role changed while the fetch was in flight
+    }
+    while (batches.size() >= batch::kHeaderBytes) {
+        const std::size_t size = batch::kRecordBatchOverhead + readBatchHeader(batches).batchLength;
+        if (size > batches.size()) {
+            return {ErrorCode::CORRUPT_MESSAGE, "truncated batch from the leader"};
+        }
+        auto info = log_->append(batches.first(size), epoch, /*assignOffsets=*/false);
+        if (!info.ok()) {
+            return {info.error(), info.message()};
+        }
+        batches = batches.subspan(size);
+    }
+    // LLD §6.8: never above what the leader has committed, nor above what we hold.
+    const Offset newHw = std::min(leaderHw, log_->leo());
+    if (newHw != hw_.load(std::memory_order_relaxed)) {
+        hw_.store(newHw, std::memory_order_release);
+    }
+    return okStatus();
+}
+
 Status Replica::awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch) {
     std::unique_lock lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
     const auto leadershipMoved = [&] { return role_ != Role::LEADER || leaderEpoch_ != epoch; };
