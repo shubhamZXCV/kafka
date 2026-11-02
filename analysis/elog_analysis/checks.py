@@ -66,3 +66,46 @@ def check_skipped(processed, high_watermarks):
         if covered < hw:
             violations.append(f"{topic}-{partition}: processed up to {covered} of {hw}")
     return violations
+
+
+def _merged(ranges):
+    """Sorted, non-overlapping [start, end) ranges covering the same offsets."""
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def check_no_skips(processed, produced):
+    """INV-05 against the producers: every acked offset in produced-*.csv lies in some
+    processed range. Measured against what was produced, not what consumers saw, so a
+    partition no consumer ever read still counts."""
+    violations = []
+    for (topic, partition), acked in produced.groupby(["topic", "partition"]):
+        rows = processed[(processed["topic"] == topic) & (processed["partition"] == partition)]
+        covered = _merged(zip(rows["start_offset"], rows["end_offset_excl"]))
+        for base, count in zip(acked["base_offset"], acked["count"]):
+            for start, end in _merged([(base, base + count)]):
+                pos = start
+                for c_start, c_end in covered:
+                    if c_start <= pos < c_end:
+                        pos = c_end
+                if pos < end:
+                    violations.append(f"{topic}-{partition}: acked offset {pos} never processed")
+                    break
+    return violations
+
+
+def count_duplicates(processed):
+    """Records processed more than once, per (topic, partition) and in total (E8):
+    the sum of range lengths minus the distinct offsets they cover."""
+    per_partition = {}
+    for (topic, partition), rows in processed.groupby(["topic", "partition"]):
+        ranges = list(zip(rows["start_offset"], rows["end_offset_excl"]))
+        total = sum(end - start for start, end in ranges)
+        distinct = sum(end - start for start, end in _merged(ranges))
+        per_partition[(topic, partition)] = total - distinct
+    return sum(per_partition.values()), per_partition
