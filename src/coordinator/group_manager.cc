@@ -182,6 +182,32 @@ Member* GroupManager::findMember(const std::string& groupId, const MemberId& id,
     return &m->second;
 }
 
+// An unknown group is reported Empty at generation 0.
+Frame GroupManager::onDescribe(const Frame& request) {
+    auto describe = decodeDescribeGroupRequest(request);
+    if (!describe.ok()) {
+        return encodeErrorResponse(request, describe.error());
+    }
+    DescribeGroupResponse response{ErrorCode::NONE, "Empty", 0, cfg_.defaultAssignor, {}, {}};
+    if (const auto it = groups_.find(describe.value().groupId); it != groups_.end()) {
+        const Group& group = it->second;
+        response.state = std::string(groupStateName(group.state));
+        response.generation = group.generation;
+        response.assignor = group.assignor;
+        for (const auto& [id, member] : group.members) {
+            response.members.push_back({id, member.clientId});
+        }
+        for (const auto& [tp, ownership] : group.ownership) {
+            auto committed = repo_.committedOffset(group.id, tp);
+            const std::int64_t offset =
+                committed.ok() && committed.value() ? std::int64_t(*committed.value()) : -1;
+            response.partitions.push_back(
+                {tp.topic, tp.partition, ownership.owner, ownership.epoch, offset});
+        }
+    }
+    return encode(response, request.correlationId);
+}
+
 void GroupManager::failPendingJoins() {
     stopping_ = true;
     for (auto& [groupId, group] : groups_) {

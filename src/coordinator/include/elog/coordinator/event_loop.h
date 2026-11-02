@@ -14,6 +14,7 @@
 #include "elog/coordinator/event.h"
 #include "elog/coordinator/group_manager.h"
 #include "elog/coordinator/metadata_manager.h"
+#include "elog/coordinator/offset_manager.h"
 #include "elog/coordinator/repository.h"
 #include "elog/protocol/frame.h"
 
@@ -53,6 +54,7 @@ private:
     MetadataManager meta_;
     BrokerLiveness brokers_;
     GroupManager groups_;
+    OffsetManager offsets_;
     BrokerPusher& pusher_;
     const std::uint32_t controllerIncarnation_;  // start time in seconds, informational (R-15)
     std::map<BrokerId, PushRetry> pushRetries_;

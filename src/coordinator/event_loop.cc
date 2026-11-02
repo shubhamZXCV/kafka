@@ -22,6 +22,7 @@ EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPushe
       meta_(repo),
       brokers_(repo, cfg.brokerSessionTimeout),
       groups_(repo, meta_, events, cfg.groups),
+      offsets_(repo, events),
       pusher_(pusher),
       controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
 
@@ -119,6 +120,12 @@ Frame EventLoop::dispatch(const Frame& request) {
             return groups_.onHeartbeat(request, time::monotonicMs());
         case ApiKey::LeaveGroup:
             return groups_.onLeave(request, time::monotonicMs());
+        case ApiKey::OffsetCommit:
+            return offsets_.onCommit(request, time::wallMs());
+        case ApiKey::OffsetFetch:
+            return offsets_.onFetch(request);
+        case ApiKey::DescribeGroup:
+            return groups_.onDescribe(request);
         default:
             break;
     }

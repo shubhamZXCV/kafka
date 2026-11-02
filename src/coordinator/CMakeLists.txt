@@ -8,6 +8,7 @@ add_library(elog_coordinator_lib STATIC
     event_loop.cc
     group_manager.cc
     metadata_manager.cc
+    offset_manager.cc
     repository.cc
     schema.cc)
 

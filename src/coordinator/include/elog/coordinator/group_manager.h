@@ -34,6 +34,8 @@ public:
     void onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now);
     Frame onHeartbeat(const Frame& request, TimeMs now);
     Frame onLeave(const Frame& request, TimeMs now);
+    // Read-only state, members, ownership and committed offsets (LLD §4.6, R-8).
+    Frame onDescribe(const Frame& request);
     // Session-timeout evictions and rebalance deadlines (LLD §7.3).
     void onTick(TimeMs now);
 
