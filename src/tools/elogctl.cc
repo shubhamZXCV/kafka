@@ -3,6 +3,7 @@
 //
 //     elogctl --coordinator HOST:PORT create-topic <name> -p P -r R [--min-isr N]
 //     elogctl --coordinator HOST:PORT describe-topic <name>
+//     elogctl --coordinator HOST:PORT describe-group <group>
 //     elogctl --coordinator HOST:PORT dump <topic> <partition> [--from N]
 //     elogctl --coordinator HOST:PORT health [--brokers N] [--timeout-ms T]
 //     elogctl log-verify <data-dir>              (offline; read-only)
@@ -19,6 +20,7 @@
 #include "elog/client/rpc_connection.h"
 #include "elog/protocol/app_value.h"
 #include "elog/protocol/error_codes.h"
+#include "elog/protocol/group_codec.h"
 #include "elog/protocol/json_codec.h"
 #include "elog/protocol/msgpack_codec.h"
 #include "elog/protocol/record_batch.h"
@@ -110,6 +112,38 @@ int describeTopic(RpcConnection& coordinator, const tools::Args& args) {
                                      {"replicas", p.replicas},
                                      {"isr", p.isr},
                                      {"highWatermark", hw}});
+    }
+    std::cout << out.dump() << '\n';
+    return 0;
+}
+
+// One JSON object: state, generation, assignor, members, and per owned partition its owner,
+// ownership epoch and committed offset (LLD §15.2, R-8).
+int describeGroup(RpcConnection& coordinator, const tools::Args& args) {
+    if (args.positional().size() != 2) {
+        return fail("usage: describe-group <group>", 2);
+    }
+    auto frame = coordinator.call(encode(DescribeGroupRequest{args.positional()[1]}, 0));
+    if (!frame.ok()) {
+        return fail(frame.message());
+    }
+    auto group = decodeDescribeGroupResponse(frame.value());
+    if (!group.ok() || group.value().error != ErrorCode::NONE) {
+        return fail(group.ok() ? std::string(errorName(group.value().error)) : group.message());
+    }
+    const DescribeGroupResponse& g = group.value();
+    json out = {{"group", args.positional()[1]}, {"state", g.state},
+                {"generation", g.generation},    {"assignor", g.assignor},
+                {"members", json::array()},      {"partitions", json::array()}};
+    for (const auto& m : g.members) {
+        out["members"].push_back({{"memberId", m.memberId}, {"clientId", m.clientId}});
+    }
+    for (const auto& p : g.partitions) {
+        out["partitions"].push_back({{"topic", p.topic},
+                                     {"partition", p.partition},
+                                     {"owner", p.owner},
+                                     {"epoch", p.epoch},
+                                     {"committedOffset", p.committedOffset}});
     }
     std::cout << out.dump() << '\n';
     return 0;
@@ -256,10 +290,13 @@ int main(int argc, char** argv) {
         return createTopic(coordinator, args.value());
     if (command == "describe-topic")
         return describeTopic(coordinator, args.value());
+    if (command == "describe-group")
+        return describeGroup(coordinator, args.value());
     if (command == "dump")
         return dump(coordinator, args.value());
     if (command == "health")
         return health(coordinator, args.value());
-    return fail("unknown command '" + command + "' (create-topic, describe-topic, dump, health)",
+    return fail("unknown command '" + command +
+                    "' (create-topic, describe-topic, describe-group, dump, health, log-verify)",
                 2);
 }

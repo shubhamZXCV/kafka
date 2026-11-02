@@ -25,6 +25,11 @@ def describe_topic(cluster, name):
     return json.loads(elogctl(cluster, "describe-topic", name).stdout)
 
 
+def describe_group(cluster, group):
+    """The group's state, generation, members and ownership (LLD §15.2)."""
+    return json.loads(elogctl(cluster, "describe-group", group).stdout)
+
+
 def dump(cluster, topic, partition, start=0):
     """Committed records of one partition from `start`: dicts with offset, key, pid, seq."""
     out = elogctl(cluster, "dump", topic, partition, "--from", start, timeout=300).stdout
