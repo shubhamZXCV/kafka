@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -78,7 +79,7 @@ private:
     Status startManual();
     Status startGroup();
     Status joinAndApply();
-    void startAddedPartitions(const std::vector<TopicPartition>& added);
+    std::map<TopicPartition, Offset> committedOffsets(const std::vector<TopicPartition>& tps);
     void onRebalance();
     void onFenced();
     void doCommit();

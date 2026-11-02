@@ -7,8 +7,23 @@ AssignmentSnapshot AssignmentState::snapshot() const {
     return {version_, owned_};
 }
 
+std::vector<TopicPartition> AssignmentState::newPartitions(
+    const std::vector<PartitionEpoch>& assignment) const {
+    std::lock_guard lock(mu_);
+    std::vector<TopicPartition> added;
+    for (const PartitionEpoch& p : assignment) {
+        const TopicPartition tp{p.topic, p.partition};
+        const auto old = owned_.find(tp);
+        if (old == owned_.end() || old->second.epoch != p.epoch) {
+            added.push_back(tp);
+        }
+    }
+    return added;
+}
+
 AssignmentDelta AssignmentState::apply(Generation generation,
-                                       const std::vector<PartitionEpoch>& assignment) {
+                                       const std::vector<PartitionEpoch>& assignment,
+                                       const std::map<TopicPartition, Offset>& starts) {
     std::lock_guard lock(mu_);
     ++version_;
     generation_ = generation;
@@ -22,6 +37,11 @@ AssignmentDelta AssignmentState::apply(Generation generation,
             delta.retained.push_back(tp);
         } else {
             next[tp] = OwnedPartition{p.epoch, version_, std::nullopt, 0, std::nullopt};
+            if (const auto start = starts.find(tp); start != starts.end()) {
+                next[tp].fetchPosition = start->second;
+                next[tp].processedNext = start->second;
+                next[tp].lastCommitted = start->second;
+            }
             delta.added.push_back(tp);
         }
     }
@@ -50,17 +70,6 @@ bool AssignmentState::setFetchPosition(const TopicPartition& tp, std::uint64_t a
     }
     it->second.fetchPosition = position;
     return true;
-}
-
-void AssignmentState::startAt(const TopicPartition& tp, Offset position, bool committed) {
-    std::lock_guard lock(mu_);
-    if (const auto it = owned_.find(tp); it != owned_.end()) {
-        it->second.fetchPosition = position;
-        it->second.processedNext = position;
-        if (committed) {
-            it->second.lastCommitted = position;
-        }
-    }
 }
 
 bool AssignmentState::owns(const TopicPartition& tp, std::uint64_t assignedVersion) const {

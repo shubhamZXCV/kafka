@@ -96,18 +96,20 @@ Status Consumer::startGroup() {
     return joinAndApply();
 }
 
-// LLD §10.6: join, apply the assignment, drop buffered records of revoked partitions, and
-// start every added partition at its committed offset (or per auto.offset.reset).
+// LLD §10.6: join, apply the assignment with every added partition starting at its
+// committed offset (or per auto.offset.reset), and drop buffered records of revoked
+// partitions. The offsets are fetched before applying, so the fetcher, which keeps running
+// through a sticky rebalance, never starts an added partition from the reset position (R-26).
 Status Consumer::joinAndApply() {
     auto joined = membership_->join(state_.ownedWithEpochs());
     if (!joined.ok()) {
         return {joined.error(), joined.message()};
     }
     eagerAssignor_ = joined.value().assignor != "sticky";  // LLD §9: only sticky is not eager
-    const AssignmentDelta delta =
-        state_.apply(joined.value().generation, joined.value().assignment);
+    const auto& assignment = joined.value().assignment;
+    const AssignmentDelta delta = state_.apply(joined.value().generation, assignment,
+                                               committedOffsets(state_.newPartitions(assignment)));
     dropBuffered(delta.revoked);
-    startAddedPartitions(delta.added);
     logging::get("consumer")
         ->info("assignment_received generation={} added={} revoked={} retained={}",
                joined.value().generation, delta.added.size(), delta.revoked.size(),
@@ -115,20 +117,23 @@ Status Consumer::joinAndApply() {
     return okStatus();
 }
 
-void Consumer::startAddedPartitions(const std::vector<TopicPartition>& added) {
-    if (added.empty()) {
-        return;
+std::map<TopicPartition, Offset> Consumer::committedOffsets(
+    const std::vector<TopicPartition>& tps) {
+    std::map<TopicPartition, Offset> offsets;
+    if (tps.empty()) {
+        return offsets;
     }
-    auto committed = committer_->fetchCommitted(added);
-    if (!committed.ok()) {  // positions stay unset: the fetcher applies auto.offset.reset
+    auto committed = committer_->fetchCommitted(tps);
+    if (!committed.ok()) {  // no start positions: the fetcher applies auto.offset.reset
         logging::get("consumer")->warn("offset_fetch_failed error=\"{}\"", committed.message());
-        return;
+        return offsets;
     }
     for (const OffsetFetchEntry& e : committed.value()) {
         if (e.error == ErrorCode::NONE && e.offset >= 0) {
-            state_.startAt({e.topic, e.partition}, static_cast<Offset>(e.offset), true);
+            offsets[{e.topic, e.partition}] = static_cast<Offset>(e.offset);
         }
     }
+    return offsets;
 }
 
 // Consuming → Revoking → Joining (LLD §10.6): commit first; an eager assignor then gives

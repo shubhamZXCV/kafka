@@ -40,14 +40,18 @@ class AssignmentState {
 public:
     AssignmentSnapshot snapshot() const;
 
-    // Applies a new assignment. Retained partitions (same epoch) keep their positions.
-    AssignmentDelta apply(Generation generation, const std::vector<PartitionEpoch>& assignment);
+    // The partitions apply() would add: not owned, or owned under another epoch.
+    std::vector<TopicPartition> newPartitions(const std::vector<PartitionEpoch>& assignment) const;
+    // Applies a new assignment. Retained partitions (same epoch) keep their positions; added
+    // ones start at `starts` (their committed offsets) or, without one, per auto.offset.reset.
+    // One lock covers both, so the fetcher never sees an added partition without its start
+    // position and resets it (R-26).
+    AssignmentDelta apply(Generation generation, const std::vector<PartitionEpoch>& assignment,
+                          const std::map<TopicPartition, Offset>& starts = {});
     void revokeAll();
 
     // Sets the fetch position if the partition is still owned under assignedVersion.
     bool setFetchPosition(const TopicPartition& tp, std::uint64_t assignedVersion, Offset position);
-    // Where processing (and fetching) starts after an assignment, e.g. the committed offset.
-    void startAt(const TopicPartition& tp, Offset position, bool committed);
 
     // Whether a record fetched under assignedVersion may still be processed.
     bool owns(const TopicPartition& tp, std::uint64_t assignedVersion) const;
