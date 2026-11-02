@@ -1,5 +1,6 @@
 add_library(elog_storage STATIC
     checkpoint_file.cc
+    leader_epoch_cache.cc
     log_verifier.cc
     partition_log.cc
     segment.cc
