@@ -58,4 +58,17 @@ Result<std::vector<PartitionError>> OffsetCommitter::commit(const MemberId& memb
     return errors;
 }
 
+Result<std::vector<OffsetFetchEntry>> OffsetCommitter::fetchCommitted(
+    const std::vector<TopicPartition>& partitions) {
+    auto frame = coordinator_.call(encode(OffsetFetchRequest{groupId_, partitions}, 0));
+    if (!frame.ok()) {
+        return {frame.error(), frame.message()};
+    }
+    auto response = decodeOffsetFetchResponse(frame.value());
+    if (!response.ok()) {
+        return {response.error(), response.message()};
+    }
+    return response.value().offsets;
+}
+
 }  // namespace elog

@@ -93,6 +93,11 @@ void MembershipClient::resetMemberId() {
     joined_ = false;
 }
 
+MemberId MembershipClient::memberId() const {
+    std::lock_guard lock(mu_);
+    return memberId_;
+}
+
 void MembershipClient::startHeartbeats() {
     heartbeatThread_ = std::thread([this] { heartbeatLoop(); });
 }

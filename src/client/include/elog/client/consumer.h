@@ -42,11 +42,14 @@ struct ConsumedRecord {
 };
 
 class Fetcher;
+class MembershipClient;
+class OffsetCommitter;
 
 // Reads records and hands them to `process` in offset order per partition (LLD §10.1,
 // §10.4). The fetcher thread fills a bounded in-flight queue, asking brokers for no more
 // records than the queue has free slots, so a slow `process` slows fetching instead of
-// growing memory (FR-BP-01, FR-BP-02). Only manual mode (R-16) exists for now.
+// growing memory (FR-BP-01, FR-BP-02). With a groupId the consumer joins that group and
+// commits its progress (LLD §10.6); without one it reads a fixed assignment (R-16).
 //
 // Thread rules: run() is the processing thread; close() may be called from any thread.
 class Consumer {
@@ -60,6 +63,15 @@ public:
 
 private:
     Result<std::vector<TopicPartition>> partitionsToRead();
+    Status startManual();
+    Status startGroup();
+    Status joinAndApply();
+    void startAddedPartitions(const std::vector<TopicPartition>& added);
+    void onRebalance();
+    void onUnknownMember();
+    void doCommit();
+    void dropBuffered(const std::vector<TopicPartition>& partitions);
+    void dropAllBuffered();
 
     const ConsumerConfig cfg_;
     Metrics& metrics_;
@@ -67,6 +79,8 @@ private:
     AssignmentState state_;
     BoundedQueue<ConsumedRecord> inflight_;
     std::unique_ptr<Fetcher> fetcher_;
+    std::unique_ptr<MembershipClient> membership_;  // group mode only
+    std::unique_ptr<OffsetCommitter> committer_;    // group mode only
     std::atomic<bool> closed_{false};
 };
 

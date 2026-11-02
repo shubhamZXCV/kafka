@@ -33,6 +33,7 @@ public:
     Result<JoinGroupResponse> join(const std::vector<PartitionEpoch>& owned);
     void leave();
     void resetMemberId();  // the next join is a new member's
+    MemberId memberId() const;
 
     void startHeartbeats();
     void stop();

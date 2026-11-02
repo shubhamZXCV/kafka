@@ -29,6 +29,10 @@ public:
     // success), or a transport error.
     Result<std::vector<PartitionError>> commit(const MemberId& memberId, AssignmentState& state);
 
+    // The committed offset of each partition, or -1 if none (OffsetFetch).
+    Result<std::vector<OffsetFetchEntry>> fetchCommitted(
+        const std::vector<TopicPartition>& partitions);
+
 private:
     RpcConnection coordinator_;
     const std::string groupId_;
