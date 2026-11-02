@@ -14,9 +14,8 @@
 
 x-node: &node
   image: elog
-  # A minimal init as PID 1: the kernel drops signals a namespace's init sends itself, so
-  # the crash hook's raise(SIGKILL) would not kill a binary running as PID 1.
-  init: true
+  # No init: `docker kill -s SIGSTOP` signals only PID 1, so the binary itself must be PID 1
+  # for a freeze (E5) to freeze it. The crash hook copes with being PID 1 (it _Exit()s).
   user: "${ELOG_UID:-1000}:${ELOG_GID:-1000}"  # CSVs in RUN_DIR stay owned by the host user
   networks: [elog-net]
   volumes:
