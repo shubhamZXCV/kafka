@@ -66,6 +66,11 @@ public:
     // The new generation and the whole ownership diff in ONE transaction (LLD §8.5).
     Status saveGeneration(const std::string& groupId, Generation generation,
                           const std::vector<OwnershipChange>& diff);
+    // FR-OFF-04: stores the offset only if `member` owns tp at exactly `epoch`, in one
+    // statement (LLD §8.3). true: accepted; false: fenced (STALE_EPOCH).
+    Result<bool> commitOffsetFenced(const std::string& groupId, const TopicPartition& tp,
+                                    Offset offset, Epoch epoch, const MemberId& member,
+                                    TimeMs nowMs);
     Status commitOffsetUnfenced(const std::string& groupId, const TopicPartition& tp, Offset offset,
                                 Epoch epoch, TimeMs nowMs);
     Result<std::vector<GroupRecord>> loadGroups();

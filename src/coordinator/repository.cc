@@ -254,6 +254,37 @@ Status Repository::saveGeneration(const std::string& groupId, Generation generat
     return txn.value().commit();
 }
 
+// LLD §8.3: the whole fencing guarantee is this statement. The SELECT yields a row only
+// for the current owner at the current epoch, and the predicate and the write are one
+// atomic statement, so no interleaving can store a stale commit.
+Result<bool> Repository::commitOffsetFenced(const std::string& groupId, const TopicPartition& tp,
+                                            Offset offset, Epoch epoch, const MemberId& member,
+                                            TimeMs nowMs) {
+    auto stmt = db_->prepare(
+        "INSERT INTO committed_offset (group_id, topic, partition, offset, owner_epoch, "
+        "committed_at_ms) "
+        "SELECT :g, :t, :p, :offset, :epoch, :now FROM partition_ownership AS o "
+        "WHERE o.group_id = :g AND o.topic = :t AND o.partition = :p "
+        "AND o.owner_member = :member AND o.owner_epoch = :epoch "
+        "ON CONFLICT (group_id, topic, partition) DO UPDATE SET offset = excluded.offset, "
+        "owner_epoch = excluded.owner_epoch, committed_at_ms = excluded.committed_at_ms");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    Stmt& s = *stmt.value();
+    s.bind(":g", groupId);
+    s.bind(":t", tp.topic);
+    s.bind(":p", std::int64_t{tp.partition});
+    s.bind(":offset", static_cast<std::int64_t>(offset));
+    s.bind(":epoch", std::int64_t{epoch});
+    s.bind(":member", member);
+    s.bind(":now", nowMs);
+    if (auto status = stepToEnd(s); !status.ok()) {
+        return {status.error(), status.message()};
+    }
+    return db_->changes() == 1;  // one row: the committer owns tp at that epoch
+}
+
 Status Repository::commitOffsetUnfenced(const std::string& groupId, const TopicPartition& tp,
                                         Offset offset, Epoch epoch, TimeMs nowMs) {
     // LLD §8.3, unfenced variant: no ownership check at all.
