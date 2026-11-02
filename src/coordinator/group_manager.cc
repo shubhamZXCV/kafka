@@ -79,6 +79,109 @@ void GroupManager::onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply
     maybeCompleteRebalance(*group, now);
 }
 
+Frame GroupManager::onHeartbeat(const Frame& request, TimeMs now) {
+    auto heartbeat = decodeHeartbeatRequest(request);
+    if (!heartbeat.ok()) {
+        return encodeErrorResponse(request, heartbeat.error());
+    }
+    Group* group = nullptr;
+    Member* member = findMember(heartbeat.value().groupId, heartbeat.value().memberId, &group);
+    ErrorCode error = ErrorCode::NONE;
+    if (!member) {
+        error = ErrorCode::UNKNOWN_MEMBER;
+    } else {
+        member->lastHeartbeatMs = now;
+        if (group->state == GroupState::PREPARING_REBALANCE) {
+            error = ErrorCode::REBALANCE_IN_PROGRESS;  // the member must rejoin
+        } else if (heartbeat.value().generation != group->generation) {
+            error = ErrorCode::ILLEGAL_GENERATION;
+        }
+    }
+    return encode(HeartbeatResponse{error}, request.correlationId);
+}
+
+// FR-GRP-05: a graceful leave starts the rebalance at once.
+Frame GroupManager::onLeave(const Frame& request, TimeMs now) {
+    auto leave = decodeLeaveGroupRequest(request);
+    if (!leave.ok()) {
+        return encodeErrorResponse(request, leave.error());
+    }
+    Group* group = nullptr;
+    if (!findMember(leave.value().groupId, leave.value().memberId, &group)) {
+        return encode(LeaveGroupResponse{ErrorCode::UNKNOWN_MEMBER}, request.correlationId);
+    }
+    removeMember(*group, leave.value().memberId, "leave", now, true);
+    return encode(LeaveGroupResponse{ErrorCode::NONE}, request.correlationId);
+}
+
+// A member waiting in JoinGroup is not evicted for missing heartbeats: the rebalance
+// deadline covers it (LLD §7.3).
+void GroupManager::onTick(TimeMs now) {
+    for (auto& [groupId, group] : groups_) {
+        std::vector<MemberId> expired;
+        for (const auto& [id, member] : group.members) {
+            if (!member.pendingJoin && now - member.lastHeartbeatMs > member.sessionTimeoutMs) {
+                expired.push_back(id);
+            }
+        }
+        for (const MemberId& id : expired) {
+            events_.emit({.event = "member_evicted",
+                          .group = groupId,
+                          .member = id,
+                          .detail = "cause=session_timeout"});
+            removeMember(group, id, "timeout", now, true);
+        }
+        if (group.state == GroupState::PREPARING_REBALANCE && now >= group.rebalanceDeadline) {
+            std::vector<MemberId> missing;
+            for (const auto& [id, member] : group.members) {
+                if (!member.rejoined) {
+                    missing.push_back(id);
+                }
+            }
+            for (const MemberId& id : missing) {
+                events_.emit({.event = "member_evicted",
+                              .group = groupId,
+                              .member = id,
+                              .detail = "cause=rebalance_timeout"});
+                removeMember(group, id, "rebalance_timeout", now, false);
+            }
+            completeRebalance(group, now);
+        }
+    }
+}
+
+// LLD §7.3: ownership rows are NOT touched here; they change only in completeRebalance, so a
+// removed member's commits stay fenced by the CAS until its partitions are reassigned.
+void GroupManager::removeMember(Group& group, const MemberId& id, const std::string& cause,
+                                TimeMs now, bool complete) {
+    Member& member = group.members.at(id);
+    if (member.pendingJoin) {
+        replyJoinError(member, ErrorCode::UNKNOWN_MEMBER);
+    }
+    group.members.erase(id);
+    logging::get("coordinator")
+        ->info("member_removed group={} member={} cause={}", group.id, id, cause);
+    if (group.state != GroupState::PREPARING_REBALANCE) {
+        prepareRebalance(group, cause, now);
+    }
+    if (complete) {
+        maybeCompleteRebalance(group, now);
+    }
+}
+
+Member* GroupManager::findMember(const std::string& groupId, const MemberId& id, Group** group) {
+    const auto g = groups_.find(groupId);
+    if (g == groups_.end()) {
+        return nullptr;
+    }
+    const auto m = g->second.members.find(id);
+    if (m == g->second.members.end()) {
+        return nullptr;
+    }
+    *group = &g->second;
+    return &m->second;
+}
+
 void GroupManager::failPendingJoins() {
     stopping_ = true;
     for (auto& [groupId, group] : groups_) {

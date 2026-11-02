@@ -32,6 +32,10 @@ public:
     GroupManager(Repository& repo, const MetadataManager& meta, EventLog& events, GroupConfig cfg);
 
     void onJoin(const Frame& request, std::shared_ptr<ReplySlot> reply, TimeMs now);
+    Frame onHeartbeat(const Frame& request, TimeMs now);
+    Frame onLeave(const Frame& request, TimeMs now);
+    // Session-timeout evictions and rebalance deadlines (LLD §7.3).
+    void onTick(TimeMs now);
 
     // R-20: the coordinator is stopping; answer every pending join and refuse new ones.
     void failPendingJoins();
@@ -40,6 +44,9 @@ private:
     Group* getOrCreate(const std::string& groupId);
     void replyJoinError(Member& member, ErrorCode error);
     void prepareRebalance(Group& group, const std::string& cause, TimeMs now);
+    void removeMember(Group& group, const MemberId& id, const std::string& cause, TimeMs now,
+                      bool complete);
+    Member* findMember(const std::string& groupId, const MemberId& id, Group** group);
     void maybeCompleteRebalance(Group& group, TimeMs now);
     void completeRebalance(Group& group, TimeMs now);
     std::vector<OwnershipChange> ownershipDiff(const Group& group, const Assignor& assignor,

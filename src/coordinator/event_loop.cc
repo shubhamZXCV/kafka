@@ -115,6 +115,10 @@ Frame EventLoop::dispatch(const Frame& request) {
             return brokers_.onRegister(request, time::monotonicMs());
         case ApiKey::BrokerHeartbeat:
             return brokers_.onHeartbeat(request, time::monotonicMs());
+        case ApiKey::Heartbeat:
+            return groups_.onHeartbeat(request, time::monotonicMs());
+        case ApiKey::LeaveGroup:
+            return groups_.onLeave(request, time::monotonicMs());
         default:
             break;
     }
@@ -127,6 +131,7 @@ Frame EventLoop::dispatch(const Frame& request) {
 // LLD §7.2. Leader election for dead brokers and group session timeouts hook in here.
 void EventLoop::onTick(TimeMs now) {
     brokers_.onTick(now);
+    groups_.onTick(now);
     for (auto it = pushRetries_.begin(); it != pushRetries_.end();) {
         if (it->second.dueMs > now) {
             ++it;
