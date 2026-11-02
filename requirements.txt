@@ -1,0 +1,5 @@
+# Python packages for the functional tests and the analysis (versions as tested).
+matplotlib==3.6.3
+numpy==1.26.4
+pandas==2.1.4
+pytest==7.4.4
