@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "elog/client/assignment_state.h"
 #include "elog/client/metadata_cache.h"
 #include "elog/common/bounded_queue.h"
 #include "elog/common/metrics.h"
@@ -32,6 +33,7 @@ struct ConsumedRecord {
     Offset offset = 0;
     TimeMs timestampMs = 0;
     std::vector<std::byte> key, value;
+    std::uint64_t assignedVersion = 0;  // internal: the assignment it was fetched under
 };
 
 class Fetcher;
@@ -57,6 +59,7 @@ private:
     const ConsumerConfig cfg_;
     Metrics& metrics_;
     MetadataCache metadata_;
+    AssignmentState state_;
     BoundedQueue<ConsumedRecord> inflight_;
     std::unique_ptr<Fetcher> fetcher_;
     std::atomic<bool> closed_{false};

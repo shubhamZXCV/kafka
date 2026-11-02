@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "elog/client/assignment_state.h"
 #include "elog/client/consumer.h"
 #include "elog/client/metadata_cache.h"
 #include "elog/client/rpc_connection.h"
@@ -24,30 +25,32 @@ namespace elog {
 // blocks.
 //
 // Thread rules: start() and stop() are called by the processing thread; everything else
-// runs on the fetcher thread, which alone owns positions_ and connections_.
+// runs on the fetcher thread, which alone owns connections_. Positions live in the shared
+// AssignmentState and are only advanced for the assignment version they were fetched under.
 class Fetcher {
 public:
-    Fetcher(const ConsumerConfig& cfg, MetadataCache& metadata,
+    Fetcher(const ConsumerConfig& cfg, MetadataCache& metadata, AssignmentState& state,
             BoundedQueue<ConsumedRecord>& inflight, Metrics& metrics);
 
-    void start(std::vector<TopicPartition> partitions);
+    void start();
     void stop();
 
 private:
     void loop();
-    void fetchFrom(const BrokerAddress& leader, const std::vector<TopicPartition>& partitions,
+    using Owned = std::pair<TopicPartition, OwnedPartition>;
+    void resolvePositions(AssignmentSnapshot& snapshot);
+    void fetchFrom(const BrokerAddress& leader, const std::vector<Owned>& partitions,
                    std::uint32_t credit, bool longPoll);
-    void accept(const FetchPartitionResponse& response, const TopicPartition& tp);
+    void accept(const FetchPartitionResponse& response, const Owned& owned);
     std::optional<Offset> startingOffset(const TopicPartition& tp);
     RpcConnection& connectionTo(const BrokerAddress& broker);
     void pause();  // after an error, so a failing broker is not hammered
 
     const ConsumerConfig& cfg_;
     MetadataCache& metadata_;
+    AssignmentState& state_;
     BoundedQueue<ConsumedRecord>& inflight_;
     Metrics& metrics_;
-    std::vector<TopicPartition> partitions_;
-    std::map<TopicPartition, Offset> positions_;  // next offset to fetch
     std::map<std::pair<std::string, std::uint16_t>, RpcConnection> connections_;
     const std::uint32_t lowWater_;      // R-17: fetch once this many slots are free
     std::uint32_t round_ = 0;           // rotates partition order for fairness

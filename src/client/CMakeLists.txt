@@ -1,4 +1,5 @@
 add_library(elog_client STATIC
+    assignment_state.cc
     consumer.cc
     fetcher.cc
     metadata_cache.cc

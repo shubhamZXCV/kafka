@@ -13,7 +13,7 @@ Consumer::Consumer(ConsumerConfig cfg, Metrics& metrics)
       metrics_(metrics),
       metadata_(cfg_.coordinator),
       inflight_(cfg_.inflightMax),
-      fetcher_(std::make_unique<Fetcher>(cfg_, metadata_, inflight_, metrics_)) {}
+      fetcher_(std::make_unique<Fetcher>(cfg_, metadata_, state_, inflight_, metrics_)) {}
 
 Consumer::~Consumer() {
     close();
@@ -30,13 +30,19 @@ Status Consumer::run(const std::function<void(const ConsumedRecord&)>& process) 
     }
     logging::get("consumer")
         ->info("consuming mode=manual partitions={}", partitions.value().size());
-    fetcher_->start(std::move(partitions).value());
+    std::vector<PartitionEpoch> assignment;
+    for (const TopicPartition& tp : partitions.value()) {
+        assignment.push_back({tp.topic, tp.partition, 0});
+    }
+    state_.apply(0, assignment);  // manual mode: a fixed assignment, no group
+    fetcher_->start();
     while (!closed_) {
         auto record = inflight_.pop(std::chrono::milliseconds(100));
-        if (!record) {
+        if (!record || !state_.owns(record->tp, record->assignedVersion)) {
             continue;
         }
         process(*record);
+        state_.markProcessed(record->tp, record->offset + 1);
         const std::string labels =
             "topic=" + record->tp.topic + ";partition=" + std::to_string(record->tp.partition);
         metrics_.counter("consume_records_total", labels).add();
