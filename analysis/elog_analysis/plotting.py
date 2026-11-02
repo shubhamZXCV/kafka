@@ -24,7 +24,8 @@ plt.rcParams.update({
     "axes.titlelocation": "left", "text.color": INK, "axes.labelcolor": INK_SECONDARY,
     "xtick.color": INK_SECONDARY, "ytick.color": INK_SECONDARY,
     "axes.edgecolor": GRID, "axes.spines.top": False, "axes.spines.right": False,
-    "axes.grid": True, "axes.grid.axis": "y", "grid.color": GRID, "grid.linewidth": 0.8,
+    "axes.grid": True, "axes.grid.axis": "y", "axes.axisbelow": True, "grid.color": GRID,
+    "grid.linewidth": 0.8,
     "lines.linewidth": 2, "lines.markersize": 8, "patch.linewidth": 0,
     "legend.frameon": False, "axes.prop_cycle": matplotlib.cycler(color=SERIES),
 })
