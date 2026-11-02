@@ -102,6 +102,7 @@ Status Consumer::joinAndApply() {
     if (!joined.ok()) {
         return {joined.error(), joined.message()};
     }
+    eagerAssignor_ = joined.value().assignor != "sticky";  // LLD §9: only sticky is not eager
     const AssignmentDelta delta =
         state_.apply(joined.value().generation, joined.value().assignment);
     dropBuffered(delta.revoked);
@@ -129,12 +130,16 @@ void Consumer::startAddedPartitions(const std::vector<TopicPartition>& added) {
     }
 }
 
-// Consuming → Revoking → Joining (LLD §10.6): commit first, then (eager) give up everything.
+// Consuming → Revoking → Joining (LLD §10.6): commit first; an eager assignor then gives
+// up everything. Under sticky, owned partitions keep fetching through the join, and those
+// it retains continue where they were, with no pause and no offset fetch.
 void Consumer::onRebalance() {
     membership_->rebalanceRequested = false;  // a request during the join triggers another
     doCommit();
-    state_.revokeAll();
-    dropAllBuffered();
+    if (eagerAssignor_) {
+        state_.revokeAll();
+        dropAllBuffered();
+    }
     if (auto status = joinAndApply(); !status.ok()) {
         logging::get("consumer")->error("rejoin_failed error=\"{}\"", status.message());
         closed_ = true;

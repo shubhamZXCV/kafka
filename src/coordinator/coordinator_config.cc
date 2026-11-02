@@ -15,8 +15,7 @@ std::vector<ConfigKey> coordinatorConfigSchema() {
         ConfigKey::string("db.path", "./coordinator.db"),
         ConfigKey::string("metrics.dir", "./metrics"),
         ConfigKey::boolean("coordinator.fencing.enabled", true),  // false only for E5 control
-        // R-20: roundrobin until the client keeps retained partitions running (C097).
-        ConfigKey::choice("group.default.assignor", "roundrobin", {"roundrobin", "sticky"}),
+        ConfigKey::choice("group.default.assignor", "sticky", {"roundrobin", "sticky"}),
         ConfigKey::integer("group.min.session.timeout.ms", 1000, 1, 3'600'000),
         ConfigKey::integer("group.max.session.timeout.ms", 60'000, 1, 3'600'000),
         ConfigKey::integer("coordinator.tick.ms", 100, 10, 1000),

@@ -95,6 +95,7 @@ private:
     std::unique_ptr<MembershipClient> membership_;  // group mode only
     std::unique_ptr<OffsetCommitter> committer_;    // group mode only
     std::atomic<bool> closed_{false};
+    bool eagerAssignor_ = true;  // from the last JoinGroup; processing thread only
     // R-24: records processed since the last fully accepted commit; none before the first.
     std::optional<std::uint32_t> processedSinceCommit_;
 };
