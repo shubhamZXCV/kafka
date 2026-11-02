@@ -95,7 +95,12 @@ def test_F_REP_4_not_enough_replicas(make_cluster, out_dir):
     cluster.brokers[followers[0]].start()
     wait_until(lambda: len(partition_state(cluster)["isr"]) == 2, 30, "a follower back in the ISR")
     assert start_producer(cluster, "t", out_dir, id="p2", count=1_000).wait(60) == 0
-    assert partition_state(cluster)["highWatermark"] == 2_000
+    # A batch the blocked producer sent in the moment before the leader learnt of the shrink
+    # may have been stored and committed later, though never acked (at-least-once): the
+    # guarantee is the other way round, that nothing acked is missing.
+    produced = load_produced(out_dir)
+    assert produced[produced["producer"] != "p1"]["count"].sum() == 2_000
+    assert check_committed_loss(produced, {("t", 0): dump(cluster, "t", 0)}) == []
 
 
 @pytest.mark.slow
