@@ -36,6 +36,17 @@ public:
                       const Assignment& previous) const override;
 };
 
+// LLD §9.3: balanced like round-robin, but keeps as many previous (partition, owner) pairs
+// as a balanced assignment allows; the extra (+1) slots go to the members that retained the
+// most. Not eager: a partition that stays put keeps its ownership epoch.
+class StickyAssignor final : public Assignor {
+public:
+    std::string_view name() const override { return "sticky"; }
+    bool eager() const override { return false; }
+    Assignment assign(std::span<const MemberId> members, std::span<const TopicPartition> partitions,
+                      const Assignment& previous) const override;
+};
+
 // The assignor called `name`, or nullptr if there is none.
 std::unique_ptr<Assignor> makeAssignor(std::string_view name);
 
