@@ -6,6 +6,7 @@
 #include "elog/common/logging.h"
 #include "elog/protocol/error_response.h"
 #include "elog/protocol/json_codec.h"
+#include "elog/protocol/replication_codec.h"
 
 namespace elog {
 
@@ -45,7 +46,8 @@ TopicRecord place(const CreateTopicRequest& request, std::vector<BrokerAddress> 
 
 }  // namespace
 
-MetadataManager::MetadataManager(Repository& repo) : repo_(repo) {}
+MetadataManager::MetadataManager(Repository& repo, EventLog& events)
+    : repo_(repo), events_(events) {}
 
 Status MetadataManager::load() {
     auto topics = repo_.loadTopics();
@@ -137,6 +139,54 @@ std::vector<PartitionState> MetadataManager::partitionsHostedBy(BrokerId broker,
         }
     }
     return states;
+}
+
+// Parse → validate (current leader, current epoch, a sane ISR) → persist → apply → reply.
+Frame MetadataManager::onAlterIsr(const Frame& request) {
+    auto alter = decodeAlterIsrRequest(request);
+    if (!alter.ok()) {
+        return encodeErrorResponse(request, alter.error());
+    }
+    const AlterIsrRequest& r = alter.value();
+    const auto reply = [&](ErrorCode error, std::vector<BrokerId> isr) {
+        return encode(AlterIsrResponse{error, std::move(isr)}, request.correlationId);
+    };
+    const auto topic = topics_.find(r.topic);
+    if (topic == topics_.end() || r.partition >= topic->second.partitionStates.size()) {
+        return reply(ErrorCode::UNKNOWN_TOPIC_OR_PARTITION, {});
+    }
+    PartitionRecord& p = topic->second.partitionStates[r.partition];
+    if (r.leaderEpoch != p.leaderEpoch || r.brokerId != p.leader) {
+        return reply(ErrorCode::FENCED_LEADER_EPOCH, p.isr);  // a stale or deposed leader
+    }
+    const bool hasLeader = std::find(r.newIsr.begin(), r.newIsr.end(), p.leader) != r.newIsr.end();
+    const bool onlyReplicas = std::all_of(r.newIsr.begin(), r.newIsr.end(), [&](BrokerId b) {
+        return std::find(p.replicas.begin(), p.replicas.end(), b) != p.replicas.end();
+    });
+    if (!hasLeader || !onlyReplicas) {
+        return reply(ErrorCode::INVALID_REQUEST, p.isr);
+    }
+    PartitionRecord next = p;
+    next.isr = r.newIsr;
+    if (auto status = repo_.savePartitionState({r.topic, r.partition}, next); !status.ok()) {
+        logging::get("coordinator")
+            ->critical("alter_isr_failed topic={} partition={} error=\"{}\"", r.topic, r.partition,
+                       status.message());
+        return reply(ErrorCode::UNKNOWN_SERVER_ERROR, p.isr);
+    }
+    p = std::move(next);
+    std::string isr;
+    for (BrokerId b : p.isr) {
+        isr += (isr.empty() ? "" : ",") + std::to_string(b);
+    }
+    events_.emit({.event = "isr_changed",
+                  .tp = TopicPartition{r.topic, r.partition},
+                  .epoch = p.leaderEpoch,
+                  .detail = "isr=" + isr});
+    logging::get("coordinator")
+        ->info("isr_changed topic={} partition={} epoch={} isr=[{}]", r.topic, r.partition,
+               p.leaderEpoch, isr);
+    return reply(ErrorCode::NONE, p.isr);
 }
 
 std::uint32_t MetadataManager::partitionCount(const std::string& topic) const {

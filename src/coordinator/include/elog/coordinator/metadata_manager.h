@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "elog/common/events.h"
 #include "elog/coordinator/repository.h"
 #include "elog/protocol/frame.h"
 #include "elog/protocol/messages.h"
@@ -16,13 +17,17 @@ namespace elog {
 // Thread rules: event-loop thread only (LLD §11.3).
 class MetadataManager {
 public:
-    explicit MetadataManager(Repository& repo);
+    MetadataManager(Repository& repo, EventLog& events);
 
     // Reads the persisted topics (LLD §7.6). Called once, before the loop starts.
     Status load();
 
     Frame onCreateTopic(const Frame& request, const std::vector<BrokerAddress>& liveBrokers);
     Frame onMetadata(const Frame& request, const std::vector<BrokerAddress>& liveBrokers) const;
+
+    // LLD §7.5: a leader's ISR change, accepted only from the current leader at the current
+    // epoch, persisted before the reply.
+    Frame onAlterIsr(const Frame& request);
 
     // The partitions `broker` is a replica of, as LeaderAndIsr states; only those of
     // `topic` if it is set.
@@ -41,6 +46,7 @@ private:
     TopicMetadata describe(const std::string& name) const;
 
     Repository& repo_;
+    EventLog& events_;
     std::map<std::string, TopicRecord> topics_;
     std::vector<std::string> created_;
 };

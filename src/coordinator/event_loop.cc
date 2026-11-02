@@ -19,7 +19,7 @@ constexpr TimeMs kPushRetryDelayMs = 500;  // R-15
 EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPusher& pusher,
                      EventLog& events, Metrics& metrics)
     : tick_(cfg.tick),
-      meta_(repo),
+      meta_(repo, events),
       brokers_(repo, cfg.brokerSessionTimeout),
       groups_(repo, meta_, events, cfg.groups),
       offsets_(repo, events, metrics, cfg.fencingEnabled),
@@ -115,6 +115,8 @@ Frame EventLoop::dispatch(const Frame& request) {
             return meta_.onMetadata(request, brokers_.liveBrokers());
         case ApiKey::CreateTopic:
             return meta_.onCreateTopic(request, brokers_.liveBrokers());
+        case ApiKey::AlterIsr:
+            return meta_.onAlterIsr(request);
         case ApiKey::RegisterBroker:
             return brokers_.onRegister(request, time::monotonicMs());
         case ApiKey::BrokerHeartbeat:

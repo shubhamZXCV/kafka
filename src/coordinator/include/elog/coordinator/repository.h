@@ -60,6 +60,9 @@ public:
 
     Result<std::vector<TopicRecord>> loadTopics();
 
+    // LLD §8.4 (leader election / AlterIsr): the partition's new leader, epoch and ISR.
+    Status savePartitionState(const TopicPartition& tp, const PartitionRecord& state);
+
     // Groups, ownership and offsets (LLD §8.2, §8.4).
     Result<Txn> begin();  // for writes that span several calls, e.g. one OffsetCommit
     Status createGroup(const std::string& groupId, const std::string& assignor);

@@ -134,6 +134,27 @@ Result<std::uint32_t> Repository::registerBroker(BrokerId id, const std::string&
     return incarnation;
 }
 
+Status Repository::savePartitionState(const TopicPartition& tp, const PartitionRecord& state) {
+    auto stmt = db_->prepare(
+        "UPDATE partition_state SET leader = :leader, leader_epoch = :epoch, isr = :isr "
+        "WHERE topic = :t AND partition = :p");
+    if (!stmt.ok()) {
+        return {stmt.error(), stmt.message()};
+    }
+    Stmt& s = *stmt.value();
+    state.leader == kNoLeader ? s.bindNull(":leader")
+                              : s.bind(":leader", std::int64_t{state.leader});
+    s.bind(":epoch", std::int64_t{state.leaderEpoch});
+    s.bind(":isr", toJsonArray(state.isr));
+    s.bind(":t", tp.topic);
+    s.bind(":p", std::int64_t{tp.partition});
+    if (auto status = stepToEnd(s); !status.ok()) {
+        return status;
+    }
+    return db_->changes() == 1 ? okStatus()
+                               : Status{ErrorCode::UNKNOWN_TOPIC_OR_PARTITION, "no such partition"};
+}
+
 Result<std::vector<TopicRecord>> Repository::loadTopics() {
     auto stmt = db_->prepare(
         "SELECT name, partitions, replication_factor, min_isr FROM topic ORDER BY name");
