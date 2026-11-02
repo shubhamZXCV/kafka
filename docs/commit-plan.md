@@ -114,6 +114,7 @@ a later row, stop and propose a split or reorder instead of improvising.
 
 ### Chapter 0 — Setup (M0)
 
+
 *An empty repository becomes a buildable C++20 project with the small building blocks every module uses. Nothing runs yet. These commits are short and easy to read.*
 
 | # | Task | Commit summary | What it adds | Read carefully / learn | See it work | Size |
