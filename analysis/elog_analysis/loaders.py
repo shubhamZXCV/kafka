@@ -72,3 +72,8 @@ def load_phases(run_dir):
         return {}
     phases = pd.read_csv(path)
     return dict(zip(phases["phase"], phases["ts_ms"].astype(int)))
+
+
+def load_run(run_dir):
+    """run.json (LLD §13.1): experiment, seed, params, settings, host."""
+    return json.loads((Path(run_dir) / "run.json").read_text())

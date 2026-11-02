@@ -46,9 +46,10 @@ compose() {
     docker compose -f "$ELOG_ROOT/deploy/compose.yaml" -p elog "$@"
 }
 
-# runs/<UTC timestamp>-<name>/; the timestamp keeps repeated runs apart and sorted.
+# runs/<UTC timestamp>-<name>/; the timestamp keeps repeated runs apart and sorted. A
+# sweep sets RUNS_ROOT to its own directory so its runs stay together.
 new_run_dir() {
-    RUN_DIR="$ELOG_ROOT/runs/$(date -u +%Y%m%dT%H%M%SZ)-$1"
+    RUN_DIR="${RUNS_ROOT:-$ELOG_ROOT/runs}/$(date -u +%Y%m%dT%H%M%SZ)-$1"
     mkdir -p "$RUN_DIR"
     export RUN_DIR
     echo "run directory: $RUN_DIR"
@@ -81,6 +82,13 @@ cluster_up() {
 # Starts workload services (producer, consumer-1 ...).
 start() {
     compose --profile workload up -d --no-deps "$@"
+}
+
+# plot SCRIPT DIR...: runs analysis/SCRIPT. A failed check is reported in summary.json and
+# here, but does not stop the remaining repeats.
+plot() {
+    local script="$1"; shift
+    python3 "$ELOG_ROOT/analysis/$script" "$@" || echo "$script: some checks failed" >&2
 }
 
 # SIGTERM, so consumers make their final commit and flush their CSVs.

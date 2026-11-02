@@ -90,16 +90,27 @@ def total_lag(metrics):
     return per_partition.sum(axis=1)
 
 
-def drain_rate(metrics, start_ms, floor=0.02):
-    """E9: records/s by which the total lag falls after start_ms (the rebalance end): minus
-    the slope of a least-squares line through the lag from start_ms until it first drops
-    below `floor` of its value then (or to the end of the run). Negative if the backlog
-    grows; None with fewer than 3 samples."""
-    lag = total_lag(metrics)
+def backlog(metrics):
+    """Records acked but not yet processed by the group, per 1 s bin: the cumulative
+    produce_records_total minus the cumulative consume_records_total, both sampled every
+    second by their processes. Unlike consumer_lag_records (HW − fetch position) it
+    includes records waiting in the consumers' in-flight queues. A redelivered record counts
+    as consumed twice, so after a crash it reads low by the duplicates."""
+    acked = counter_rate(metrics, "produce_records_total").cumsum()
+    done = consume_rate(metrics).cumsum()
+    index = acked.index.union(done.index)
+    return acked.reindex(index).ffill().fillna(0) - done.reindex(index).ffill().fillna(0)
+
+
+def drain_rate(lag, start_ms, baseline=0.0, done=0.1):
+    """E9: records/s by which a lag series (backlog or total_lag) falls after start_ms (the
+    rebalance end): minus the least-squares slope from start_ms until the lag is back within
+    `done` of the way from its value at start_ms to `baseline` (the steady-state lag before
+    the fault), or to the end. Negative if it grows; None with fewer than 3 samples."""
     lag = lag[lag.index >= start_ms - start_ms % 1000]
     if len(lag) < 3:
         return None
-    drained = lag[lag <= floor * lag.iloc[0]]
+    drained = lag[lag <= baseline + done * (lag.iloc[0] - baseline)]
     window = lag.loc[:drained.index[0]] if not drained.empty else lag
     if len(window) < 3:
         return None

@@ -36,5 +36,5 @@ for i in $(seq 1 "$REPEAT"); do
     stop_services $CONSUMERS
     dump_log "$TOPIC" "$PARTITIONS"
     cluster_down
-    python3 "$ELOG_ROOT/analysis/plot_e1.py" "$RUN_DIR"
+    plot plot_e1.py "$RUN_DIR"
 done
