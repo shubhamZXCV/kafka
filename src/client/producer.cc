@@ -17,6 +17,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t kRecordOverheadBytes = 32;            // rough per-record encoding cost
 constexpr auto kSenderPoll = std::chrono::milliseconds(5);  // linger and backoff resolution
+constexpr auto kMaxRetryBackoff = std::chrono::milliseconds(1000);
 
 // LLD §10.3: errors a later attempt can get past (new leader, freed capacity, a broker
 // that has not received its LeaderAndIsr yet, a dropped connection).
@@ -218,7 +219,11 @@ void Producer::finishBatch(const TopicPartition& tp, ErrorCode error, Offset bas
     queue.inFlight = false;
     Batch& batch = queue.batches.front();
     if (error != ErrorCode::NONE && retriable(error) && ++batch.attempts <= cfg_.retries) {
-        const auto backoff = std::max(cfg_.retryBackoff, std::chrono::milliseconds(throttleMs));
+        // LLD §10.3: bounded retries with backoff, doubling up to kMaxRetryBackoff so that
+        // the retries outlast a leader failover (session timeout + election).
+        const auto doubled = cfg_.retryBackoff * (1 << std::min(batch.attempts - 1, 4));
+        const auto backoff =
+            std::max(std::min(doubled, kMaxRetryBackoff), std::chrono::milliseconds(throttleMs));
         batch.retryAt = Clock::now() + backoff;
         return;
     }
