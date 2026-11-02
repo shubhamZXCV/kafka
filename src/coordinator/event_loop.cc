@@ -30,7 +30,7 @@ Status EventLoop::load() {
 
 // R-13: wait for a request only until the next tick is due, and check the tick deadline
 // after every request, so ticks never wait behind a full queue.
-void EventLoop::run(BoundedQueue<Event>& inbound) {
+void EventLoop::run(BoundedQueue<LoopEvent>& inbound) {
     using Clock = std::chrono::steady_clock;
     auto nextTick = Clock::now() + tick_;
     while (true) {

@@ -30,7 +30,7 @@ public:
     Status load();
 
     // Handles requests and ticks until `inbound` is closed and drained.
-    void run(BoundedQueue<Event>& inbound);
+    void run(BoundedQueue<LoopEvent>& inbound);
 
 private:
     void handle(RequestEvent& event);

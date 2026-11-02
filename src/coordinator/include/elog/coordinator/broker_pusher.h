@@ -16,7 +16,7 @@ namespace elog {
 // thread. Everything else runs on the pusher thread.
 class BrokerPusher {
 public:
-    explicit BrokerPusher(BoundedQueue<Event>& results);
+    explicit BrokerPusher(BoundedQueue<LoopEvent>& results);
 
     void start();
     void enqueue(LeaderAndIsrPush push);
@@ -26,7 +26,7 @@ private:
     void run();
     ErrorCode deliver(const LeaderAndIsrPush& push);
 
-    BoundedQueue<Event>& results_;
+    BoundedQueue<LoopEvent>& results_;
     BoundedQueue<LeaderAndIsrPush> pending_;
     std::thread thread_;
     std::uint32_t nextCorrelationId_ = 1;  // pusher thread only

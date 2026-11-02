@@ -33,6 +33,6 @@ struct PushResultEvent {
 };
 
 // Everything the event loop handles from its inbound queue.
-using Event = std::variant<RequestEvent, PushResultEvent>;
+using LoopEvent = std::variant<RequestEvent, PushResultEvent>;
 
 }  // namespace elog

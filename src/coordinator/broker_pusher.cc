@@ -16,7 +16,7 @@ constexpr std::size_t kMaxResponseBytes = 1 << 20;
 
 }  // namespace
 
-BrokerPusher::BrokerPusher(BoundedQueue<Event>& results)
+BrokerPusher::BrokerPusher(BoundedQueue<LoopEvent>& results)
     : results_(results), pending_(kMaxPendingPushes) {}
 
 void BrokerPusher::start() {

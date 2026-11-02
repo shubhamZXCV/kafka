@@ -28,7 +28,7 @@ private:
     Frame handle(const Frame& request);  // called by every connection thread
 
     const CoordinatorConfig cfg_;
-    BoundedQueue<Event> inbound_;  // requests and push results for the event loop
+    BoundedQueue<LoopEvent> inbound_;  // requests and push results for the event loop
     FrameServer server_;
 };
 
