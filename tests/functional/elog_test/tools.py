@@ -59,8 +59,10 @@ def start_producer(cluster, topic, out_dir, id="p1", **options):
     return cluster.track(Process(f"producer-{id}", argv, out_dir / f"producer-{id}.log").start())
 
 
-def start_consumer(cluster, topic, out_dir, id="c1", **options):
-    """Starts elog-consumer in manual mode (options: partitions, count, inflight, reset)."""
+def start_consumer(cluster, topic, out_dir, id="c1", group=None, **options):
+    """Starts elog-consumer: manual mode, or group mode with `group` (options: partitions,
+    count, inflight, reset, session_timeout_ms, commit_interval_records, ...)."""
+    mode = ["--group", group] if group else ["--manual"]
     argv = [str(cluster.bin / "elog-consumer"), "--coordinator", cluster.coordinator_address,
-            "--topic", topic, "--manual", "--id", id, "--out", str(out_dir), *_flags(options)]
+            "--topic", topic, *mode, "--id", id, "--out", str(out_dir), *_flags(options)]
     return cluster.track(Process(f"consumer-{id}", argv, out_dir / f"consumer-{id}.log").start())

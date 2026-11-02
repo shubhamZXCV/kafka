@@ -1,8 +1,11 @@
 // elog-consumer: consumes a topic and records what it processed (LLD §15.2, R-18) as
 // offset ranges per partition in processed-<id>.csv (LLD §13.1).
 //
-//     elog-consumer --coordinator HOST:PORT --topic T --manual [--partitions 0,1,...]
-//                   [--count N] [--inflight Q] [--reset earliest|latest] [--id c1] [--out DIR]
+//     elog-consumer --coordinator HOST:PORT --topic T (--manual [--partitions 0,1,...] |
+//                   --group G [--session-timeout-ms S] [--heartbeat-interval-ms H]
+//                   [--rebalance-timeout-ms R] [--commit-interval-records N]
+//                   [--commit-interval-ms M]) [--count N] [--inflight Q]
+//                   [--reset earliest|latest] [--id c1] [--out DIR]
 
 #include <atomic>
 #include <chrono>
@@ -40,12 +43,12 @@ public:
 
     void processed(const ConsumedRecord& record) {
         Run& run = runs_[record.tp];
-        if (run.end > run.start && record.offset != run.end) {
+        if (run.end > run.start && (record.offset != run.end || record.epoch != run.epoch)) {
             write(record.tp, run);
             run = {};
         }
         if (run.end == run.start) {
-            run = {record.offset, record.offset};
+            run = {record.offset, record.offset, record.epoch};
         }
         run.end = record.offset + 1;
         if (++sinceFlush_ >= kFlushRecords ||
@@ -58,7 +61,7 @@ public:
         for (auto& [tp, run] : runs_) {
             if (run.end > run.start) {
                 write(tp, run);
-                run = {run.end, run.end};
+                run = {run.end, run.end, run.epoch};
             }
         }
         out_.flush();
@@ -69,12 +72,13 @@ public:
 private:
     struct Run {
         Offset start = 0, end = 0;  // [start, end)
+        Epoch epoch = 0;            // ownership epoch; 0 in manual mode (R-16)
     };
 
-    // owner_epoch is 0: manual mode has no ownership (R-16).
+    // A run never spans two ownership epochs: the order check is per epoch (LLD §13.4).
     void write(const TopicPartition& tp, const Run& run) {
         out_ << time::wallMs() << ',' << consumerId_ << ',' << tp.topic << ',' << tp.partition
-             << ',' << run.start << ',' << run.end << ",0\n";
+             << ',' << run.start << ',' << run.end << ',' << run.epoch << '\n';
     }
 
     std::ofstream out_;
@@ -85,10 +89,26 @@ private:
 };
 
 Result<ConsumerConfig> configFrom(const tools::Args& args) {
-    if (!args.has("--manual")) {
-        return {ErrorCode::INVALID_REQUEST, "--manual is required (consumer groups come later)"};
+    if (args.has("--manual") == !args.get("--group").empty()) {
+        return {ErrorCode::INVALID_REQUEST, "give exactly one of --manual and --group"};
     }
     ConsumerConfig cfg;
+    cfg.groupId = args.get("--group");
+    for (const auto& [flag, field] : {std::pair{"--session-timeout-ms", &cfg.sessionTimeout},
+                                      std::pair{"--heartbeat-interval-ms", &cfg.heartbeatInterval},
+                                      std::pair{"--rebalance-timeout-ms", &cfg.rebalanceTimeout},
+                                      std::pair{"--commit-interval-ms", &cfg.commitIntervalTime}}) {
+        const auto value = args.getInt(flag);
+        if (!value.ok()) {
+            return {value.error(), value.message()};
+        }
+        *field = std::chrono::milliseconds(value.value());  // negative commit interval: off
+    }
+    const auto commitRecords = args.getInt("--commit-interval-records");
+    if (!commitRecords.ok() || commitRecords.value() < 1) {
+        return {ErrorCode::INVALID_REQUEST, "--commit-interval-records must be at least 1"};
+    }
+    cfg.commitIntervalRecords = static_cast<std::uint32_t>(commitRecords.value());
     cfg.coordinator = args.get("--coordinator");
     cfg.clientId = args.get("--id");
     cfg.topics = {args.get("--topic")};
@@ -163,6 +183,12 @@ int main(int argc, char** argv) {
                                  {{"--coordinator", "", true},
                                   {"--topic", "", true},
                                   {"--manual", "", false, true},
+                                  {"--group", ""},
+                                  {"--session-timeout-ms", "6000"},
+                                  {"--heartbeat-interval-ms", "2000"},
+                                  {"--rebalance-timeout-ms", "10000"},
+                                  {"--commit-interval-records", "100"},
+                                  {"--commit-interval-ms", "1000"},
                                   {"--partitions", ""},
                                   {"--id", "c1"},
                                   {"--count", "0"},

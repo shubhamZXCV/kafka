@@ -38,6 +38,7 @@ struct ConsumedRecord {
     Offset offset = 0;
     TimeMs timestampMs = 0;
     std::vector<std::byte> key, value;
+    Epoch epoch = 0;                    // the partition's ownership epoch (0 in manual mode)
     std::uint64_t assignedVersion = 0;  // internal: the assignment it was fetched under
 };
 

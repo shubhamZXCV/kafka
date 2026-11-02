@@ -175,6 +175,7 @@ void Fetcher::accept(const FetchPartitionResponse& response, const Owned& owned)
                                   r.timestampMs,
                                   {},
                                   {r.value.begin(), r.value.end()},
+                                  partition.epoch,
                                   partition.assignedVersion};
             if (r.key) {
                 record.key.assign(r.key->begin(), r.key->end());
