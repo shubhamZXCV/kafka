@@ -2,6 +2,7 @@ add_library(elog_client STATIC
     assignment_state.cc
     consumer.cc
     fetcher.cc
+    membership_client.cc
     metadata_cache.cc
     producer.cc
     rpc_connection.cc)

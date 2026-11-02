@@ -25,6 +25,9 @@ struct ConsumerConfig {
     std::size_t inflightMax = 1'000;         // Q, the credit ceiling
     std::size_t fetchMaxBytes = 1 << 20;
     std::chrono::milliseconds fetchMaxWait{500};
+    std::chrono::milliseconds sessionTimeout{6'000};  // group mode (LLD §10.1)
+    std::chrono::milliseconds heartbeatInterval{2'000};
+    std::chrono::milliseconds rebalanceTimeout{10'000};
     enum class Reset { Earliest, Latest } autoOffsetReset = Reset::Earliest;
 };
 
