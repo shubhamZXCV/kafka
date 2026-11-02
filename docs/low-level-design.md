@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.16 |
+| Version | 1.17 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -32,6 +32,7 @@
 | 1.14 | 2026-11-02 | R-21: processed ranges are written before every offset commit (`beforeCommit` hook) (§10.6, §13.1). |
 | 1.15 | 2026-11-02 | R-22: `elog-consumer --process-us` (per-record callback sleep) (§15.2, §16.2). |
 | 1.16 | 2026-11-02 | R-23: follower truncation takes the minimum of the leader's and its own end offset for the returned epoch, in one round (§6.8). |
+| 1.17 | 2026-11-02 | R-24: when the crash-after-process hook arms and fires, and what it flushes (§14). |
 
 ---
 
@@ -2353,7 +2354,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-22 only fill in details, and R-23 corrects a detail, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout, R-10 to R-22 and R-24 only fill in details, and R-23 corrects a detail, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2380,6 +2381,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-21 | §10.6 consumer, §13.1 processed log | Processed ranges flushed "regularly" | A `beforeCommit` hook runs before every OffsetCommit; `elog-consumer` flushes its processed ranges there. | After a SIGKILL the next consumer resumes from the committed offset; if the processed log lagged the commit, the analysis would report records that were processed as skipped. |
 | R-22 | §16.2 E7, §15.3 fencing tests | "Callback sleep" consumer capacity not given a knob | `elog-consumer --process-us N` sleeps N µs per record in the callback. | E7 needs a known consumer capacity; F-FEN-1 needs a zombie that still holds unprocessed records when it wakes, so its stale commit is certain. |
 | R-23 | §6.8 follower truncation | Loop: truncate to min(leader end, LEO), drop epochs from there, retry | One round: truncate to min(leader's end for `le`, the follower's own end for `le`), and never below HW. | When the leader never had the follower's latest epoch `e` (started before the leader's end), the loop kept the follower's divergent records and asked about `e` forever. The follower's own end offset for `le` is where its log can first differ (as in Kafka's KIP-279). |
+| R-24 | §14 crash hook | "Since the last successful commit" undefined before the first commit, for `k = 0`, and for a partly rejected commit | The hook arms at the run's first commit whose entries are all accepted, and fires when the records processed since the latest such commit reach `k`; it is checked after each processed record and after each commit, so `k = 0` fires right after a commit. `random` draws `k` from `--seed` in `elog-consumer`. A `beforeCrash` callback lets the tool flush its processed ranges; the consumer then logs `crash_hook_fired processed_since_commit=k`, flushes the logs and raises `SIGKILL`. | Firing before any commit would make every restart crash at the same place without progress. The flush keeps the processed log complete, so duplicates can be counted exactly (R-21). |
 
 ---
 
