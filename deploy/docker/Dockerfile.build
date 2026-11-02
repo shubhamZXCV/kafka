@@ -1,0 +1,21 @@
+# Build image (HLD §16.1, NFR-REPRO-02): the pinned toolchain, and the release build of
+# this source tree in /src/build/release/bin. Build from the repository root:
+#
+#     docker build -f deploy/docker/Dockerfile.build -t elog-build .
+
+# Ubuntu 24.04, pinned by digest so the toolchain below cannot drift.
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+
+# GCC 13.3 and CMake 3.28 (LLD §2.1); third-party libraries come from FetchContent,
+# pinned by hash in cmake/Dependencies.cmake.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates 'g++-13=13.3.*' 'gcc-13=13.3.*' 'cmake=3.28.*' ninja-build \
+ && rm -rf /var/lib/apt/lists/*
+ENV CC=gcc-13 CXX=g++-13
+
+WORKDIR /src
+COPY CMakeLists.txt CMakePresets.json ./
+COPY cmake cmake
+COPY src src
+RUN cmake --preset release && cmake --build --preset release

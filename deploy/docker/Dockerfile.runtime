@@ -1,0 +1,17 @@
+# Runtime image (HLD §16.1): the release binaries on a slim base. One image runs every
+# process of the compose topology; the command picks which. Build after elog-build:
+#
+#     docker build -f deploy/docker/Dockerfile.runtime -t elog .
+
+ARG BUILD_IMAGE=elog-build
+FROM ${BUILD_IMAGE} AS build
+
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+# iproute2 for tc netem (LLD §14), used when a container gets NET_ADMIN.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/build/release/bin/ /usr/local/bin/
+# compose runs containers as the host user; a new named volume copies these permissions.
+RUN mkdir -p /data /metrics && chmod 1777 /data /metrics
+WORKDIR /data

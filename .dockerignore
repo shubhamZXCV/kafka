@@ -1,0 +1,6 @@
+# Only CMakeLists.txt, CMakePresets.json, cmake/ and src/ go into the build image.
+*
+!CMakeLists.txt
+!CMakePresets.json
+!cmake/
+!src/
