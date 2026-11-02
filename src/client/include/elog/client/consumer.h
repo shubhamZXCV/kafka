@@ -72,7 +72,7 @@ private:
     Status joinAndApply();
     void startAddedPartitions(const std::vector<TopicPartition>& added);
     void onRebalance();
-    void onUnknownMember();
+    void onFenced();
     void doCommit();
     void dropBuffered(const std::vector<TopicPartition>& partitions);
     void dropAllBuffered();

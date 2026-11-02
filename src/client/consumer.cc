@@ -30,8 +30,8 @@ Status Consumer::run(const std::function<void(const ConsumedRecord&)>& process) 
     }
     fetcher_->start();
     while (!closed_) {
-        if (membership_ && membership_->unknownMember) {
-            onUnknownMember();
+        if (membership_ && (membership_->fenced || membership_->unknownMember)) {
+            onFenced();
             continue;
         }
         if (membership_ && membership_->rebalanceRequested) {
@@ -136,8 +136,14 @@ void Consumer::onRebalance() {
     }
 }
 
-// Evicted (e.g. paused past the session timeout): nothing owned is ours any more.
-void Consumer::onUnknownMember() {
+// FR-OFF-11: fenced (a commit got STALE_EPOCH) or evicted (e.g. paused past the session
+// timeout): nothing it holds is its own any more, so drop everything, buffered records
+// included, and join again as a new member.
+void Consumer::onFenced() {
+    logging::get("consumer")
+        ->warn("fenced reason={} generation={}", membership_->fenced ? "stale_epoch" : "evicted",
+               state_.generation());
+    membership_->fenced = false;
     membership_->unknownMember = false;
     membership_->rebalanceRequested = false;
     state_.revokeAll();
@@ -167,6 +173,8 @@ void Consumer::doCommit() {
             membership_->rebalanceRequested = true;
         } else if (e.error == ErrorCode::UNKNOWN_MEMBER) {
             membership_->unknownMember = true;
+        } else if (e.error == ErrorCode::STALE_EPOCH) {
+            membership_->fenced = true;
         }
     }
 }

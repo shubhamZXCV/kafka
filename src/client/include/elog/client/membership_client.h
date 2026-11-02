@@ -38,9 +38,10 @@ public:
     void startHeartbeats();
     void stop();
 
-    // Raised by the heartbeat thread, cleared by the processing thread.
+    // Raised by the heartbeat thread (or a commit reply), cleared by the processing thread.
     std::atomic<bool> rebalanceRequested{false};
     std::atomic<bool> unknownMember{false};
+    std::atomic<bool> fenced{false};  // a commit got STALE_EPOCH (FR-OFF-11)
 
 private:
     void heartbeatLoop();
