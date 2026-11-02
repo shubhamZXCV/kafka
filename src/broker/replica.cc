@@ -114,6 +114,7 @@ std::optional<Replica::ProduceSlot> Replica::tryAdmitProduce(std::chrono::millis
     if (!pendingSlots_.try_acquire_for(wait)) {
         return std::nullopt;
     }
+    ++pendingProduce_;
     return ProduceSlot(*this);
 }
 
@@ -211,6 +212,12 @@ Result<ReplicaFetchData> Replica::readForFollower(BrokerId follower, Offset fetc
         out.records = std::move(raw.value().batches);
     }
     return out;
+}
+
+ReplicaGauges Replica::gauges() const {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ → PartitionLog::segMu_ (LLD §11.2)
+    return {log_->leo(), hw(), log_->sizeBytes(), leader_ ? leader_->isr.size() : 0,
+            pendingProduce_.load()};
 }
 
 std::optional<FollowerView> Replica::followerView() const {

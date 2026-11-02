@@ -2,6 +2,7 @@
 
 #include "elog/broker/broker_config.h"
 #include "elog/broker/replica_manager.h"
+#include "elog/common/metrics.h"
 #include "elog/protocol/messages.h"
 
 namespace elog {
@@ -13,7 +14,7 @@ namespace elog {
 // while it waits for a slot or for the commit.
 class ProduceHandler {
 public:
-    ProduceHandler(ReplicaManager& replicas, const BrokerConfig& cfg);
+    ProduceHandler(ReplicaManager& replicas, const BrokerConfig& cfg, Metrics& metrics);
 
     // Takes the request by reference because each batch is stamped in place.
     ProduceResponse handle(ProduceRequest& request);
@@ -24,6 +25,7 @@ private:
 
     ReplicaManager& replicas_;
     const BrokerConfig& cfg_;
+    Counter& throttled_;  // produce_throttled_total
 };
 
 }  // namespace elog

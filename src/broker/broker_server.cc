@@ -16,11 +16,12 @@ FrameServerConfig serverConfig(const BrokerConfig& cfg) {
 
 }  // namespace
 
-BrokerServer::BrokerServer(BrokerConfig cfg)
+BrokerServer::BrokerServer(BrokerConfig cfg, Metrics& metrics)
     : cfg_(std::move(cfg)),
+      metrics_(metrics),
       replicas_(cfg_.dataDir, cfg_.log, cfg_.maxPendingProduce, hwNotifier_),
       agent_(cfg_, replicas_),
-      produceHandler_(replicas_, cfg_),
+      produceHandler_(replicas_, cfg_, metrics_),
       fetchHandler_(replicas_, hwNotifier_, cfg_),
       replicaFetchHandler_(replicas_, hwNotifier_, agent_, cfg_),
       fetchers_(replicas_, cfg_),
@@ -64,6 +65,8 @@ void BrokerServer::scheduleJobs() {
                      [this] { replicas_.checkpointHighWatermarks(); });
     scheduler_.every("retention", cfg_.retentionCheckInterval,
                      [this] { replicas_.applyRetention(); });
+    scheduler_.every("metrics", cfg_.metricsFlushInterval,
+                     [this] { replicas_.sampleGauges(metrics_); });
     scheduler_.every("isr-shrink", cfg_.replicaLagTimeMax / 2, [this] {  // LLD §6.10
         for (IsrProposal& proposal : replicas_.maybeShrinkIsrs(cfg_.replicaLagTimeMax)) {
             agent_.proposeIsr(std::move(proposal));

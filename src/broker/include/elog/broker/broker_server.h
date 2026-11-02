@@ -10,6 +10,7 @@
 #include "elog/broker/replica_fetcher.h"
 #include "elog/broker/replica_manager.h"
 #include "elog/broker/request_dispatcher.h"
+#include "elog/common/metrics.h"
 #include "elog/protocol/frame_server.h"
 
 namespace elog {
@@ -20,7 +21,7 @@ namespace elog {
 // Thread rules: run() owns the calling thread; shutdown() may be called from any thread.
 class BrokerServer {
 public:
-    explicit BrokerServer(BrokerConfig cfg);
+    BrokerServer(BrokerConfig cfg, Metrics& metrics);
 
     // Serves until shutdown(). Returns a process exit code: 0 after shutdown, 1 if the
     // listener cannot be bound.
@@ -33,6 +34,7 @@ private:
     void scheduleJobs();
 
     const BrokerConfig cfg_;
+    Metrics& metrics_;
     HwNotifier hwNotifier_;
     ReplicaManager replicas_;
     CoordinatorAgent agent_;  // before the handlers that queue ISR proposals on it

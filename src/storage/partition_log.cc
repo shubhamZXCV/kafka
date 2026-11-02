@@ -361,6 +361,14 @@ std::vector<std::shared_ptr<Segment>> PartitionLog::snapshot() const {
     return segments_;
 }
 
+std::uint64_t PartitionLog::sizeBytes() const {
+    std::uint64_t total = 0;
+    for (const auto& segment : snapshot()) {
+        total += segment->size();
+    }
+    return total;
+}
+
 std::size_t PartitionLog::segmentCount() const {
     return snapshot().size();
 }

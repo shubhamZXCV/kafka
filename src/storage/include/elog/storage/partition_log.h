@@ -94,6 +94,7 @@ public:
     // Everything below this offset is known to be on disk; recovery scans from here.
     Offset recoveryPoint() const { return recoveryPoint_.load(std::memory_order_acquire); }
     std::size_t segmentCount() const;
+    std::uint64_t sizeBytes() const;  // all segments
 
 private:
     PartitionLog(std::string dir, LogConfig cfg, std::vector<std::shared_ptr<Segment>> segments,

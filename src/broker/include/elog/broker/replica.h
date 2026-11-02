@@ -81,6 +81,15 @@ struct FollowerView {
     FollowerState state = FollowerState::TRUNCATING;
 };
 
+// One partition's gauges for metrics-<broker>.csv (LLD §13.2), sampled by the scheduler.
+struct ReplicaGauges {
+    Offset leo = 0;
+    Offset hw = 0;
+    std::uint64_t logSizeBytes = 0;
+    std::size_t isrSize = 0;  // 0 unless leading
+    std::int64_t pendingProduce = 0;
+};
+
 // The largest max.pending.produce allowed (LLD §12.1).
 inline constexpr std::ptrdiff_t kMaxPendingProduce = 10'000;
 
@@ -106,6 +115,7 @@ public:
         ProduceSlot& operator=(ProduceSlot&&) = delete;
         ~ProduceSlot() {
             if (replica_) {
+                --replica_->pendingProduce_;
                 replica_->pendingSlots_.release();
             }
         }
@@ -181,6 +191,7 @@ public:
 
     // Scheduler jobs (LLD §6.10, §11.3): flush the log; read its recovery point.
     Status flushLog() { return log_->flush(); }
+    ReplicaGauges gauges() const;
     Offset recoveryPoint() const { return log_->recoveryPoint(); }
     std::size_t applyRetention(TimeMs nowWallMs);
     Offset logStartOffset() const { return log_->logStartOffset(); }
@@ -208,6 +219,7 @@ private:
     FollowerState followerState_ = FollowerState::TRUNCATING;  // meaningful while FOLLOWER
     std::counting_semaphore<kMaxPendingProduce> pendingSlots_;
     HwNotifier& hwNotifier_;
+    std::atomic<std::int64_t> pendingProduce_{0};  // admission slots in use (pending_produce)
 };
 
 }  // namespace elog

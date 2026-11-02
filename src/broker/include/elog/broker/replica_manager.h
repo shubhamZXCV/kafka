@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "elog/broker/replica.h"
+#include "elog/common/metrics.h"
 #include "elog/common/result.h"
 #include "elog/common/types.h"
 
@@ -44,6 +45,8 @@ public:
     void checkpointRecoveryPoints();
     void checkpointHighWatermarks();
     void applyRetention();
+    // LLD §13.2: per-partition gauges, sampled at each metrics flush.
+    void sampleGauges(Metrics& metrics) const;
     // LLD §6.10: the ISR shrink check for every leader replica; returns the proposals.
     std::vector<IsrProposal> maybeShrinkIsrs(std::chrono::milliseconds lagTimeMax);
 

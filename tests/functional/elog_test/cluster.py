@@ -101,6 +101,7 @@ class Cluster:
                         "advertised.host": "127.0.0.1",
                         "coordinator.address": self.coordinator_address,
                         "data.dir": self.root / f"broker-{broker_id}",
+                        "metrics.dir": self.root,
                         "broker.heartbeat.interval.ms": 500, **(broker_settings or {})}
             self.brokers[broker_id] = self._process(f"broker-{broker_id}", "elog-broker",
                                                     settings)

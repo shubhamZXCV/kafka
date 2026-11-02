@@ -147,4 +147,18 @@ std::vector<IsrProposal> ReplicaManager::maybeShrinkIsrs(std::chrono::millisecon
     return proposals;
 }
 
+void ReplicaManager::sampleGauges(Metrics& metrics) const {
+    for (const auto& replica : all()) {
+        const TopicPartition& tp = replica->topicPartition();
+        const std::string labels =
+            "topic=" + tp.topic + ";partition=" + std::to_string(tp.partition);
+        const ReplicaGauges g = replica->gauges();
+        metrics.gauge("log_end_offset", labels).set(static_cast<std::int64_t>(g.leo));
+        metrics.gauge("high_watermark", labels).set(static_cast<std::int64_t>(g.hw));
+        metrics.gauge("log_size_bytes", labels).set(static_cast<std::int64_t>(g.logSizeBytes));
+        metrics.gauge("isr_size", labels).set(static_cast<std::int64_t>(g.isrSize));
+        metrics.gauge("pending_produce", labels).set(g.pendingProduce);
+    }
+}
+
 }  // namespace elog

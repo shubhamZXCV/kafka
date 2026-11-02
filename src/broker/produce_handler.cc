@@ -4,8 +4,8 @@
 
 namespace elog {
 
-ProduceHandler::ProduceHandler(ReplicaManager& replicas, const BrokerConfig& cfg)
-    : replicas_(replicas), cfg_(cfg) {}
+ProduceHandler::ProduceHandler(ReplicaManager& replicas, const BrokerConfig& cfg, Metrics& metrics)
+    : replicas_(replicas), cfg_(cfg), throttled_(metrics.counter("produce_throttled_total")) {}
 
 ProduceResponse ProduceHandler::handle(ProduceRequest& request) {
     ProduceResponse response;
@@ -30,6 +30,7 @@ ProducePartitionResponse ProduceHandler::producePartition(ProducePartition& part
     if (!slot) {
         logging::get("broker")->warn("produce_throttled topic={} partition={}", partition.topic,
                                      partition.partition);
+        throttled_.add();
         out.error = ErrorCode::THROTTLED;
         out.throttleMs = static_cast<std::uint32_t>(cfg_.produceThrottleHint.count());
         return out;

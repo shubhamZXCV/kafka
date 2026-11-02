@@ -42,6 +42,8 @@ struct BrokerConfig {
     std::size_t replicaFetchMaxBytes = 0;              // replica.fetch.max.bytes
     std::chrono::milliseconds replicaFetchWait{0};     // replica.fetch.wait.ms
     std::chrono::milliseconds replicaLagTimeMax{0};    // replica.lag.time.max.ms
+    std::string metricsDir;                            // metrics-<node>.csv (LLD §13.1)
+    std::chrono::milliseconds metricsFlushInterval{0};
 
     // `config` must have been loaded with brokerConfigSchema().
     static BrokerConfig from(const Config& config);

@@ -16,6 +16,7 @@
 #include "elog/broker/broker_server.h"
 #include "elog/common/config.h"
 #include "elog/common/logging.h"
+#include "elog/common/metrics.h"
 #include "elog/common/version.h"
 
 namespace {
@@ -110,7 +111,12 @@ int main(int argc, char** argv) {
     sigaddset(&signals, SIGUSR1);
     pthread_sigmask(SIG_BLOCK, &signals, nullptr);
 
-    elog::BrokerServer server(cfg);
+    auto metrics = elog::Metrics::open(cfg.metricsDir, node, cfg.metricsFlushInterval);
+    if (!metrics.ok()) {
+        std::fprintf(stderr, "elog-broker: %s\n", metrics.message().c_str());
+        return 2;
+    }
+    elog::BrokerServer server(cfg, *metrics.value());
     std::thread signalWaiter([&] {
         int signal = 0;
         sigwait(&signals, &signal);
