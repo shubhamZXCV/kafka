@@ -1,4 +1,4 @@
-"""Consumer-group functional tests F-GRP-1 … F-GRP-4 (LLD §15.3)."""
+"""Consumer-group functional tests F-GRP-1 … F-GRP-5 and F-ALO-1 (LLD §15.3)."""
 
 import sys
 import time
@@ -119,3 +119,20 @@ def test_F_GRP_5_coordinator_restart(make_cluster, out_dir):
     for c in consumers:
         c.stop()
     assert check_no_skips(load_processed(out_dir), load_produced(out_dir)) == []
+
+
+def test_F_ALO_1_crash_after_process_gives_exactly_k_duplicates(make_cluster, out_dir):
+    """Crash after the 37th record past a commit (interval 100, time trigger off): the
+    restarted consumer processes exactly those 37 again and skips nothing (LLD §14)."""
+    cluster = make_cluster(brokers=1)
+    topic_with_records(cluster, out_dir, 1, 1_000)
+    commits = {"commit_interval_records": 100, "commit_interval_ms": -1, **FAST}
+    crashing = start_consumer(cluster, "t", out_dir, id="c1", group="g",
+                              crash_after_process=37, **commits)
+    assert crashing.wait(60) == -9                      # SIGKILL from the hook
+    assert "crash_hook_fired processed_since_commit=37" in crashing.log()
+    restarted = start_consumer(cluster, "t", out_dir, id="c2", group="g", count=900, **commits)
+    assert restarted.wait(60) == 0                      # resumes at the committed 100
+    processed = load_processed(out_dir)
+    assert check_no_skips(processed, load_produced(out_dir)) == []
+    assert count_duplicates(processed)[0] == 37

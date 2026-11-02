@@ -41,3 +41,12 @@ def load_events(run_dir):
     """Every events-*.csv row (LLD §13.1), in each file's order."""
     return _load(run_dir, "events-*.csv", EVENT_COLUMNS)
 
+
+
+METRIC_COLUMNS = ["ts_ms", "node", "metric", "labels", "value"]
+
+
+def load_metrics(run_dir, pattern="metrics-*.csv"):
+    """Metric samples (LLD §13.1), one row per metric per flush; `labels` is "" if none."""
+    data = _load(run_dir, pattern, METRIC_COLUMNS)
+    return data.assign(labels=data["labels"].fillna(""))
