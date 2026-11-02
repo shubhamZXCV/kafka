@@ -38,3 +38,52 @@ def test_F_REP_1_replicas_converge(make_cluster, out_dir):
         assert code == 0, report
         ranges = {p["partition"]: (p["firstOffset"], p["nextOffset"]) for p in report["partitions"]}
         assert ranges == {f"t-{p}": (0, hw) for p, hw in hws.items()}
+
+
+LAG = {"replica.lag.time.max.ms": 2000}
+
+
+def partition_state(cluster, topic="t", partition=0):
+    return describe_topic(cluster, topic)["partitions"][partition]
+
+
+def test_F_REP_3_isr_shrinks_and_expands(make_cluster, out_dir):
+    """SIGSTOP one follower: the ISR shrinks and produce continues; SIGCONT: the ISR expands
+    again once it has caught up."""
+    cluster = make_cluster(brokers=3, broker_settings=LAG)
+    create_topic(cluster, "t", 1, replication=3, min_isr=2)
+    wait_until(replicas_ready(cluster, "t"), 30, "replicas")
+    state = partition_state(cluster)
+    follower = next(b for b in state["replicas"] if b != state["leader"])
+
+    cluster.brokers[follower].pause()
+    wait_until(lambda: len(partition_state(cluster)["isr"]) == 2, 20, "ISR shrink")
+    assert follower not in partition_state(cluster)["isr"]
+    assert start_producer(cluster, "t", out_dir, count=5_000).wait(60) == 0
+    assert partition_state(cluster)["highWatermark"] == 5_000
+
+    cluster.brokers[follower].resume()
+    wait_until(lambda: len(partition_state(cluster)["isr"]) == 3, 30, "ISR expansion")
+
+
+def test_F_REP_4_not_enough_replicas(make_cluster, out_dir):
+    """minISR=2 and two of three brokers stopped: producing fails with NOT_ENOUGH_REPLICAS,
+    and works again once one broker is back and in the ISR."""
+    cluster = make_cluster(brokers=3, broker_settings=LAG)
+    create_topic(cluster, "t", 1, replication=3, min_isr=2)
+    wait_until(replicas_ready(cluster, "t"), 30, "replicas")
+    assert start_producer(cluster, "t", out_dir, id="p0", count=1_000).wait(60) == 0
+    leader = partition_state(cluster)["leader"]
+    followers = [b for b in (1, 2, 3) if b != leader]
+    for b in followers:
+        assert cluster.brokers[b].stop() == 0
+    wait_until(lambda: partition_state(cluster)["isr"] == [leader], 20, "ISR down to the leader")
+
+    blocked = start_producer(cluster, "t", out_dir, id="p1", count=10)
+    assert blocked.wait(60) != 0
+    assert "NOT_ENOUGH_REPLICAS" in blocked.log()
+
+    cluster.brokers[followers[0]].start()
+    wait_until(lambda: len(partition_state(cluster)["isr"]) == 2, 30, "a follower back in the ISR")
+    assert start_producer(cluster, "t", out_dir, id="p2", count=1_000).wait(60) == 0
+    assert partition_state(cluster)["highWatermark"] == 2_000
