@@ -31,3 +31,13 @@ def load_produced(run_dir):
 def load_processed(run_dir):
     """Processed offset ranges from every processed-*.csv, in each file's write order."""
     return _load(run_dir, "processed-*.csv", PROCESSED_COLUMNS)
+
+
+EVENT_COLUMNS = ["ts_ms", "node", "event", "group", "topic", "partition", "generation", "epoch",
+                 "member", "offset", "detail"]
+
+
+def load_events(run_dir):
+    """Every events-*.csv row (LLD §13.1), in each file's order."""
+    return _load(run_dir, "events-*.csv", EVENT_COLUMNS)
+

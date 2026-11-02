@@ -109,3 +109,15 @@ def count_duplicates(processed):
         distinct = sum(end - start for start, end in _merged(ranges))
         per_partition[(topic, partition)] = total - distinct
     return sum(per_partition.values()), per_partition
+
+
+def count_offset_regressions(events):
+    """E5: per (group, topic, partition), how often an accepted commit was lower than the
+    one before it, from the coordinator's commit_accepted events in file order (LLD §13.4).
+    `events` is a DataFrame of events-coordinator.csv. Returns (total, per partition)."""
+    accepted = events[events["event"] == "commit_accepted"]
+    per_partition = {}
+    for key, rows in accepted.groupby(["group", "topic", "partition"], sort=False):
+        offsets = list(rows["offset"])
+        per_partition[key] = sum(1 for a, b in zip(offsets, offsets[1:]) if b < a)
+    return sum(per_partition.values()), per_partition
