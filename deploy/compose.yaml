@@ -1,0 +1,98 @@
+# Single-host evaluation topology (HLD §16.1): coordinator, 3 brokers, up to 8 consumers,
+# a producer and an optional Toxiproxy, each in its own container with CPU and memory caps
+# (NFR-REPRO-01). Every process writes its CSVs to RUN_DIR (LLD §13.1).
+#
+#     docker compose -f deploy/compose.yaml up -d                         # cluster only
+#     docker compose -f deploy/compose.yaml exec coordinator \
+#         elogctl --coordinator coordinator:9000 health
+#     docker compose -f deploy/compose.yaml --profile workload up -d      # + clients
+#     docker compose -f deploy/compose.yaml down -v
+#
+# Workload variables (with their defaults): TOPIC=t, GROUP=g, RATE=1000, COUNT=0 (no
+# limit), PRODUCER_ARGS, CONSUMER_ARGS. Experiments set them, or add an override file.
+
+x-node: &node
+  image: elog
+  user: "${ELOG_UID:-1000}:${ELOG_GID:-1000}"  # CSVs in RUN_DIR stay owned by the host user
+  networks: [elog-net]
+  volumes:
+    - ${RUN_DIR:-../runs/manual}:/metrics
+
+x-broker: &broker
+  <<: *node
+  depends_on: [coordinator]
+  cap_add: [NET_ADMIN]  # tc netem on the broker's interface (LLD §14)
+  cpus: 1
+  mem_limit: 1g
+
+x-consumer: &consumer
+  <<: *node
+  profiles: [workload]
+  depends_on: [broker-1, broker-2, broker-3]
+  cpus: 0.5
+  mem_limit: 256m
+
+services:
+  coordinator:
+    <<: *node
+    cpus: 1
+    mem_limit: 512m
+    volumes:
+      - ${RUN_DIR:-../runs/manual}:/metrics
+      - coord-db:/data
+    command: >-
+      elog-coordinator --set db.path=/data/coordinator.db --set metrics.dir=/metrics
+      ${COORDINATOR_ARGS:-}
+
+  broker-1:
+    <<: *broker
+    volumes: [ "${RUN_DIR:-../runs/manual}:/metrics", "data-1:/data" ]
+    command: >-
+      elog-broker --set broker.id=1 --set advertised.host=broker-1 --set data.dir=/data
+      --set metrics.dir=/metrics ${BROKER_ARGS:-}
+  broker-2:
+    <<: *broker
+    volumes: [ "${RUN_DIR:-../runs/manual}:/metrics", "data-2:/data" ]
+    command: >-
+      elog-broker --set broker.id=2 --set advertised.host=broker-2 --set data.dir=/data
+      --set metrics.dir=/metrics ${BROKER_ARGS:-}
+  broker-3:
+    <<: *broker
+    volumes: [ "${RUN_DIR:-../runs/manual}:/metrics", "data-3:/data" ]
+    command: >-
+      elog-broker --set broker.id=3 --set advertised.host=broker-3 --set data.dir=/data
+      --set metrics.dir=/metrics ${BROKER_ARGS:-}
+
+  producer:
+    <<: *node
+    profiles: [workload]
+    depends_on: [broker-1, broker-2, broker-3]
+    cpus: 1
+    mem_limit: 512m
+    command: >-
+      elog-producer --coordinator coordinator:9000 --topic ${TOPIC:-t} --rate ${RATE:-1000}
+      --count ${COUNT:-0} --id p1 --out /metrics ${PRODUCER_ARGS:-}
+
+  consumer-1: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c1 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-2: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c2 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-3: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c3 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-4: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c4 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-5: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c5 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-6: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c6 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-7: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c7 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-8: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c8 --out /metrics ${CONSUMER_ARGS:-}" }
+
+  # Fallback for latency emulation when NET_ADMIN is not available (HLD §16.1).
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    profiles: [toxiproxy]
+    networks: [elog-net]
+
+networks:
+  elog-net: {}
+
+volumes:
+  coord-db: {}
+  data-1: {}
+  data-2: {}
+  data-3: {}
