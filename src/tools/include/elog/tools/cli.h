@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <string>
 #include <vector>
@@ -33,5 +34,10 @@ private:
 // Parses argv[first..argc). An unknown flag, a missing value or a missing required flag is
 // an INVALID_REQUEST error, which tools report with exit code 2.
 Result<Args> parseArgs(int argc, char** argv, int first, const std::vector<Flag>& flags);
+
+// Opens an output CSV (LLD §13.1) for appending, writing `header` only if the file is new
+// or empty: a restarted tool with the same --id continues its file instead of erasing what
+// it recorded before the crash (E2, E8). Check good() on the result.
+std::ofstream openCsv(const std::string& path, const std::string& header);
 
 }  // namespace elog::tools

@@ -33,9 +33,9 @@ constexpr auto kFlushInterval = std::chrono::seconds(1);
 class AckWriter {
 public:
     AckWriter(const std::string& path, std::string producerId, std::string topic)
-        : out_(path), producerId_(std::move(producerId)), topic_(std::move(topic)) {
-        out_ << "ts_ms,producer,topic,partition,base_offset,count\n";
-    }
+        : out_(tools::openCsv(path, "ts_ms,producer,topic,partition,base_offset,count")),
+          producerId_(std::move(producerId)),
+          topic_(std::move(topic)) {}
 
     bool ok() const { return out_.good(); }
     std::uint64_t failed() const { return failed_; }

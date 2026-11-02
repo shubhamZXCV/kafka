@@ -1,6 +1,7 @@
 #include "elog/tools/cli.h"
 
 #include <charconv>
+#include <filesystem>
 
 namespace elog::tools {
 
@@ -47,6 +48,17 @@ Result<Args> parseArgs(int argc, char** argv, int first, const std::vector<Flag>
         }
     }
     return args;
+}
+
+std::ofstream openCsv(const std::string& path, const std::string& header) {
+    std::error_code ec;
+    const bool isNew = std::filesystem::file_size(path, ec) == 0 || ec;  // empty or missing
+    std::ofstream out(path, std::ios::app);
+    if (isNew) {
+        out << header << '\n';
+        out.flush();  // a tool killed before its first row still leaves a valid file
+    }
+    return out;
 }
 
 }  // namespace elog::tools

@@ -37,10 +37,9 @@ constexpr std::uint64_t kFlushRecords = 1000;
 class RangeWriter {
 public:
     RangeWriter(const std::string& path, std::string consumerId)
-        : out_(path), consumerId_(std::move(consumerId)) {
-        out_ << "ts_ms,consumer,topic,partition,start_offset,end_offset_excl,owner_epoch\n";
-        out_.flush();  // a consumer killed before its first range still leaves a valid file
-    }
+        : out_(tools::openCsv(
+              path, "ts_ms,consumer,topic,partition,start_offset,end_offset_excl,owner_epoch")),
+          consumerId_(std::move(consumerId)) {}
 
     bool ok() const { return out_.good(); }
 
