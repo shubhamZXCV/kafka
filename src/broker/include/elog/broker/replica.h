@@ -142,6 +142,7 @@ private:
     Role role_ = Role::FOLLOWER;
     Epoch leaderEpoch_ = 0;
     BrokerId leaderId_ = -1;  // who leads at leaderEpoch_ (none yet)
+    BrokerId self_ = -1;      // this broker, known once it leads
     std::unique_ptr<PartitionLog> log_;
     // LLD §11.4: stored with release after the records below it are in the log; readers
     // load with acquire.

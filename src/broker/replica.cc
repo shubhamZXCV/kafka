@@ -78,6 +78,7 @@ void Replica::becomeLeader(Epoch epoch, std::set<BrokerId> isr,
                            BrokerId self) {
     leaderEpoch_ = epoch;
     role_ = Role::LEADER;
+    self_ = self;
     leader_ = LeaderState{std::move(isr), std::nullopt, {}, minIsr};
     for (BrokerId replica : replicas) {
         if (replica != self) {
@@ -192,10 +193,26 @@ Status Replica::checkLeaderEpoch(Epoch requestEpoch) const {
     return okStatus();
 }
 
-// LLD §6.4 with one replica: the ISR is only this broker, so min(LEO over ISR) is our own
-// log end offset. Follower LEOs join the minimum with replication.
+// LLD §6.4, ADR-03, ADR-13: HW = min LEO over ISR ∪ pending ISR. Counting the pending ISR
+// while an AlterIsr is in flight means a shrink cannot advance HW past the follower being
+// removed until the coordinator has persisted the shrink (R-7); below minISR nothing
+// commits at all.
 void Replica::maybeAdvanceHw() {
-    const Offset newHw = log_->leo();
+    if (!leader_ || leader_->isr.size() < leader_->minIsr) {
+        return;
+    }
+    std::set<BrokerId> effective = leader_->isr;
+    if (leader_->pendingIsr) {
+        effective.insert(leader_->pendingIsr->begin(), leader_->pendingIsr->end());
+    }
+    Offset newHw = log_->leo();
+    for (BrokerId replica : effective) {
+        if (replica == self_) {
+            continue;
+        }
+        const auto f = leader_->followers.find(replica);
+        newHw = std::min(newHw, f == leader_->followers.end() ? Offset{0} : f->second.leo);
+    }
     if (newHw > hw_.load(std::memory_order_relaxed)) {
         hw_.store(newHw, std::memory_order_release);
         hwCv_.notify_all();
