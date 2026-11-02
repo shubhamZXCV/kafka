@@ -8,7 +8,8 @@ add_library(elog_protocol STATIC
     group_codec.cc
     json_codec.cc
     msgpack_codec.cc
-    record_batch.cc)
+    record_batch.cc
+    replication_codec.cc)
 
 target_include_directories(elog_protocol PUBLIC include)
 target_link_libraries(elog_protocol

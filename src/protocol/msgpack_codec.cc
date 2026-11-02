@@ -329,6 +329,75 @@ Result<FetchResponse> decodeFetchResponse(const Frame& frame) {
 
 // --- Error-only response -----------------------------------------------------------------
 
+// --- ReplicaFetch (12) ----------------------------------------------------------------------
+
+Frame encode(const ReplicaFetchRequest& request, std::uint32_t correlationId) {
+    std::vector<std::byte> body;
+    ByteSink sink{body};
+    Packer packer(sink);
+    packer.pack_map(4);
+    packField(packer, "replicaId", request.replicaId);
+    packField(packer, "maxWaitMs", request.maxWaitMs);
+    packField(packer, "maxBytes", request.maxBytes);
+    packArrayKey(packer, "partitions", request.partitions.size());
+    for (const auto& p : request.partitions) {
+        packer.pack_map(4);
+        packField(packer, "topic", p.topic);
+        packField(packer, "partition", p.partition);
+        packField(packer, "fetchOffset", p.fetchOffset);
+        packField(packer, "currentLeaderEpoch", p.currentLeaderEpoch);
+    }
+    return makeFrame(ApiKey::ReplicaFetch, correlationId, false, std::move(body));
+}
+
+Frame encode(const ReplicaFetchResponse& response, std::uint32_t correlationId) {
+    std::vector<std::byte> body;
+    ByteSink sink{body};
+    Packer packer(sink);
+    packer.pack_map(2);
+    packErrorField(packer, response.error);
+    packArrayKey(packer, "partitions", response.partitions.size());
+    for (const auto& p : response.partitions) {
+        packer.pack_map(6);
+        packField(packer, "topic", p.topic);
+        packField(packer, "partition", p.partition);
+        packErrorField(packer, p.error);
+        packField(packer, "highWatermark", p.highWatermark);
+        packField(packer, "leaderLeo", p.leaderLeo);
+        packRecordsField(packer, p.records);
+    }
+    return makeFrame(ApiKey::ReplicaFetch, correlationId, true, std::move(body));
+}
+
+Result<ReplicaFetchRequest> decodeReplicaFetchRequest(const Frame& frame) {
+    return decodeBody<ReplicaFetchRequest>(frame, ApiKey::ReplicaFetch, [](const Object& body) {
+        ReplicaFetchRequest request;
+        request.replicaId = intField<BrokerId>(body, "replicaId");
+        request.maxWaitMs = intField<std::uint32_t>(body, "maxWaitMs");
+        request.maxBytes = intField<std::uint32_t>(body, "maxBytes");
+        for (const Object& p : arrayField(body, "partitions")) {
+            request.partitions.push_back(
+                {stringField(p, "topic"), intField<std::uint32_t>(p, "partition"),
+                 intField<Offset>(p, "fetchOffset"), intField<Epoch>(p, "currentLeaderEpoch")});
+        }
+        return request;
+    });
+}
+
+Result<ReplicaFetchResponse> decodeReplicaFetchResponse(const Frame& frame) {
+    return decodeBody<ReplicaFetchResponse>(frame, ApiKey::ReplicaFetch, [](const Object& body) {
+        ReplicaFetchResponse response;
+        response.error = errorField(body);
+        for (const Object& p : arrayField(body, "partitions")) {
+            response.partitions.push_back({stringField(p, "topic"),
+                                           intField<std::uint32_t>(p, "partition"), errorField(p),
+                                           intField<Offset>(p, "highWatermark"),
+                                           intField<Offset>(p, "leaderLeo"), recordsField(p)});
+        }
+        return response;
+    });
+}
+
 Frame encodeMsgPackErrorResponse(ApiKey apiKey, std::uint32_t correlationId, ErrorCode error) {
     std::vector<std::byte> body;
     ByteSink sink{body};

@@ -5,6 +5,7 @@
 #include "elog/common/result.h"
 #include "elog/protocol/frame.h"
 #include "elog/protocol/messages.h"
+#include "elog/protocol/replication_messages.h"
 
 // MessagePack codecs for the data-plane messages (LLD §4.6–4.7). Bodies are maps with the
 // same field names as the JSON messages; records travel as bin and are not parsed here
@@ -27,6 +28,11 @@ Result<FetchRequest> decodeFetchRequest(const Frame& frame);
 Result<FetchResponse> decodeFetchResponse(const Frame& frame);
 
 // A response whose body holds only `error`, for requests a server cannot handle (LLD R-10).
+Frame encode(const ReplicaFetchRequest& request, std::uint32_t correlationId);
+Frame encode(const ReplicaFetchResponse& response, std::uint32_t correlationId);
+Result<ReplicaFetchRequest> decodeReplicaFetchRequest(const Frame& frame);
+Result<ReplicaFetchResponse> decodeReplicaFetchResponse(const Frame& frame);
+
 Frame encodeMsgPackErrorResponse(ApiKey apiKey, std::uint32_t correlationId, ErrorCode error);
 
 }  // namespace elog

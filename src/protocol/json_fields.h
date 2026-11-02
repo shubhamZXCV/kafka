@@ -13,6 +13,7 @@
 
 #include "elog/common/result.h"
 #include "elog/protocol/frame.h"
+#include "elog/protocol/messages.h"  // kMaxRequestEntries
 
 namespace elog::json_fields {
 
