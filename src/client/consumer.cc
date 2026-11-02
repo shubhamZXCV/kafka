@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <csignal>
+#include <cstdlib>
 #include <utility>
 
 #include "elog/client/fetcher.h"
@@ -208,6 +209,8 @@ void Consumer::maybeCrash() {
     logging::get("consumer")
         ->warn("crash_hook_fired processed_since_commit={}", *processedSinceCommit_);
     std::raise(SIGKILL);
+    // As PID 1 of a container a process cannot signal itself; never carry on past the crash.
+    std::_Exit(128 + SIGKILL);
 }
 
 void Consumer::dropBuffered(const std::vector<TopicPartition>& partitions) {
