@@ -13,7 +13,7 @@ source "$ELOG_ROOT/experiments/lib/faults.sh"
 source "$ELOG_ROOT/experiments/lib/kill_consumer.sh"
 parse_args "$@"
 
-SWEEP_DIR="$ELOG_ROOT/runs/$(date -u +%Y%m%dT%H%M%SZ)-e3"
+SWEEP_DIR="${RUNS_ROOT:-$ELOG_ROOT/runs}/$(date -u +%Y%m%dT%H%M%SZ)-e3"
 export RUNS_ROOT="$SWEEP_DIR"
 export WARMUP_S="${WARMUP_S:-20}" FAULT_AT_S="${FAULT_AT_S:-40}"
 

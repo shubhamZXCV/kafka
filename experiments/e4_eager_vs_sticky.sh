@@ -12,7 +12,7 @@ source "$ELOG_ROOT/experiments/lib/faults.sh"
 source "$ELOG_ROOT/experiments/lib/kill_consumer.sh"
 parse_args "$@"
 
-SWEEP_DIR="$ELOG_ROOT/runs/$(date -u +%Y%m%dT%H%M%SZ)-e4"
+SWEEP_DIR="${RUNS_ROOT:-$ELOG_ROOT/runs}/$(date -u +%Y%m%dT%H%M%SZ)-e4"
 export RUNS_ROOT="$SWEEP_DIR" LOAD_PCT=70
 
 for repeat in $(seq 1 "$REPEAT"); do

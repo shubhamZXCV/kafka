@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 REPEAT=1
 parse_args "$@"
 
-SWEEP_DIR="$ELOG_ROOT/runs/$(date -u +%Y%m%dT%H%M%SZ)-e8"
+SWEEP_DIR="${RUNS_ROOT:-$ELOG_ROOT/runs}/$(date -u +%Y%m%dT%H%M%SZ)-e8"
 export RUNS_ROOT="$SWEEP_DIR"
 PARTITIONS=4
 CRASHES="${CRASHES:-50}"

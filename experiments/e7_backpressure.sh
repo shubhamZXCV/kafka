@@ -12,7 +12,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 parse_args "$@"
 
-SWEEP_DIR="$ELOG_ROOT/runs/$(date -u +%Y%m%dT%H%M%SZ)-e7"
+SWEEP_DIR="${RUNS_ROOT:-$ELOG_ROOT/runs}/$(date -u +%Y%m%dT%H%M%SZ)-e7"
 export RUNS_ROOT="$SWEEP_DIR"
 PARTITIONS=12
 CONSUMERS="consumer-1 consumer-2 consumer-3 consumer-4"
