@@ -53,7 +53,13 @@ public:
     bool owns(const TopicPartition& tp, std::uint64_t assignedVersion) const;
     void markProcessed(const TopicPartition& tp, Offset next);
 
+    // Owned partitions processed past their last commit, with their ownership epochs.
+    std::vector<OffsetCommitEntry> pendingCommits() const;
+    // Records an accepted commit, if the partition is still owned under that epoch.
+    void markCommitted(const TopicPartition& tp, Epoch epoch, Offset offset);
+
     Generation generation() const;
+    std::vector<PartitionEpoch> ownedWithEpochs() const;
 
 private:
     mutable std::mutex mu_;

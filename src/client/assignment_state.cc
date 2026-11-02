@@ -76,6 +76,33 @@ void AssignmentState::markProcessed(const TopicPartition& tp, Offset next) {
     }
 }
 
+std::vector<OffsetCommitEntry> AssignmentState::pendingCommits() const {
+    std::lock_guard lock(mu_);
+    std::vector<OffsetCommitEntry> entries;
+    for (const auto& [tp, owned] : owned_) {
+        if (owned.processedNext > owned.lastCommitted.value_or(0)) {
+            entries.push_back({tp.topic, tp.partition, owned.processedNext, owned.epoch});
+        }
+    }
+    return entries;
+}
+
+void AssignmentState::markCommitted(const TopicPartition& tp, Epoch epoch, Offset offset) {
+    std::lock_guard lock(mu_);
+    if (const auto it = owned_.find(tp); it != owned_.end() && it->second.epoch == epoch) {
+        it->second.lastCommitted = offset;
+    }
+}
+
+std::vector<PartitionEpoch> AssignmentState::ownedWithEpochs() const {
+    std::lock_guard lock(mu_);
+    std::vector<PartitionEpoch> owned;
+    for (const auto& [tp, partition] : owned_) {
+        owned.push_back({tp.topic, tp.partition, partition.epoch});
+    }
+    return owned;
+}
+
 Generation AssignmentState::generation() const {
     std::lock_guard lock(mu_);
     return generation_;

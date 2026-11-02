@@ -28,6 +28,8 @@ struct ConsumerConfig {
     std::chrono::milliseconds sessionTimeout{6'000};  // group mode (LLD §10.1)
     std::chrono::milliseconds heartbeatInterval{2'000};
     std::chrono::milliseconds rebalanceTimeout{10'000};
+    std::uint32_t commitIntervalRecords = 100;            // N (E8)
+    std::chrono::milliseconds commitIntervalTime{1'000};  // negative: disabled (E8)
     enum class Reset { Earliest, Latest } autoOffsetReset = Reset::Earliest;
 };
 
