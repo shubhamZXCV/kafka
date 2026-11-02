@@ -40,6 +40,8 @@ def main(run_dir, pairs):
     run_dir = Path(run_dir)
     params = dict(pair.split("=", 1) for pair in pairs)
     settings = {name: os.environ.get(name, "") for name in SETTINGS}
+    settings.update({name: value for name, value in sorted(os.environ.items())
+                     if name.startswith("CONSUMER_") and name.endswith("_ARGS")})
     broker_args = settings["BROKER_ARGS"]
     meta = {
         "experiment": run_dir.name.split("-", 1)[1],

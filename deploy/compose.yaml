@@ -9,7 +9,8 @@
 #     docker compose -f deploy/compose.yaml down -v
 #
 # Workload variables (with their defaults): TOPIC=t, GROUP=g, RATE=1000, COUNT=0 (no
-# limit), PRODUCER_ARGS, CONSUMER_ARGS. Experiments set them, or add an override file.
+# limit), PRODUCER_ARGS, CONSUMER_ARGS (every consumer) and CONSUMER_<n>_ARGS (consumer-n
+# only). Experiments set them, or add an override file.
 
 x-node: &node
   image: elog
@@ -73,14 +74,14 @@ services:
       elog-producer --coordinator coordinator:9000 --topic ${TOPIC:-t} --rate ${RATE:-1000}
       --count ${COUNT:-0} --id p1 --out /metrics ${PRODUCER_ARGS:-}
 
-  consumer-1: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c1 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-2: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c2 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-3: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c3 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-4: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c4 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-5: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c5 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-6: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c6 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-7: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c7 --out /metrics ${CONSUMER_ARGS:-}" }
-  consumer-8: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c8 --out /metrics ${CONSUMER_ARGS:-}" }
+  consumer-1: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c1 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_1_ARGS:-}" }
+  consumer-2: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c2 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_2_ARGS:-}" }
+  consumer-3: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c3 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_3_ARGS:-}" }
+  consumer-4: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c4 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_4_ARGS:-}" }
+  consumer-5: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c5 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_5_ARGS:-}" }
+  consumer-6: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c6 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_6_ARGS:-}" }
+  consumer-7: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c7 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_7_ARGS:-}" }
+  consumer-8: { <<: *consumer, command: "elog-consumer --coordinator coordinator:9000 --topic ${TOPIC:-t} --group ${GROUP:-g} --id c8 --out /metrics ${CONSUMER_ARGS:-} ${CONSUMER_8_ARGS:-}" }
 
   # Fallback for latency emulation when NET_ADMIN is not available (HLD §16.1).
   toxiproxy:
