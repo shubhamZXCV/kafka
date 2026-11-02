@@ -6,7 +6,7 @@
 |---|---|
 | Project | #49 — Distributed Event Log with Dynamic Consumer Rebalancing |
 | Document type | Low-Level Design |
-| Version | 1.15 |
+| Version | 1.16 |
 | Status | Draft for review |
 | Date | 2026-11-01 |
 | Inputs | [requirements.md](requirements.md) (SRS v1.1), [high-level-design.md](high-level-design.md) (HLD v1.2) |
@@ -31,6 +31,7 @@
 | 1.13 | 2026-11-02 | R-20: coordinator `metrics.dir`; assignor default until sticky lands; member IDs; pending joins at shutdown (§7.3, §12.2). |
 | 1.14 | 2026-11-02 | R-21: processed ranges are written before every offset commit (`beforeCommit` hook) (§10.6, §13.1). |
 | 1.15 | 2026-11-02 | R-22: `elog-consumer --process-us` (per-record callback sleep) (§15.2, §16.2). |
+| 1.16 | 2026-11-02 | R-23: follower truncation takes the minimum of the leader's and its own end offset for the returned epoch, in one round (§6.8). |
 
 ---
 
@@ -1147,19 +1148,18 @@ class ReplicaFetcherThread:                                # one per source lead
                     r.hw_ ← min(p.highWatermark, r.log_.leo())
                     if flushPolicy == batch: r.log_.flush()           # before next fetch acks it
 
-    def truncate(tp):                                      # leader-epoch based (ADR-10)
+    def truncate(tp):                                      # leader-epoch based (ADR-10, R-23)
         r ← replicas_.get(tp)
-        loop:
-            e ← r.log_.epochCache().latestEpoch()
-            if e is None: r.log_.truncateTo(r.hw_); break
-            (le, end) ← conn.call(OffsetsForLeaderEpoch(tp, e))
-            if le == e: r.log_.truncateTo(min(end, r.log_.leo())); break
-            r.log_.epochCache().truncateFromEnd(end)      # drop epochs the leader never had
-            r.log_.truncateTo(min(end, r.log_.leo()))     # then retry with the earlier epoch
+        e ← r.log_.epochCache().latestEpoch()
+        if e is None: r.log_.truncateTo(r.hw_)
+        else:
+            (le, leaderEnd) ← conn.call(OffsetsForLeaderEpoch(tp, e))
+            ownEnd ← r.log_.epochCache().endOffsetFor(le, r.log_.leo()).end
+            r.log_.truncateTo(max(min(leaderEnd, ownEnd), r.hw_))   # never below HW
         r.state ← FETCHING
 ```
 
-**Leader side** of `OffsetsForLeaderEpoch(e)`: `le` is the largest epoch in the cache that is ≤ `e`. `end` is the start offset of the first epoch > `le`, or `LEO` if `le` is the latest epoch.
+Both logs agree up to the end of epoch `le` as the shorter of them has it, so one round suffices (R-23). **Leader side** of `OffsetsForLeaderEpoch(e)`: `le` is the largest epoch in the cache that is ≤ `e`. `end` is the start offset of the first epoch > `le`, or `LEO` if `le` is the latest epoch.
 
 ### 6.9 Coordinator Agent
 
@@ -2353,7 +2353,7 @@ Every script accepts `--repeat <k>` (default 5) and `--seed <s>`.
 
 ## 17. Refinements to the HLD
 
-These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-22 only fill in details, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
+These are intentional refinements made while detailing the design. R-1…R-7 were **applied in HLD v1.1** and R-8 in HLD v1.2 (see its revision history). R-9 only affects code layout and R-10 to R-22 only fill in details, and R-23 corrects a detail, so the HLD is unchanged for them. R-4 and R-7 are also recorded there as ADR-12 and ADR-13.
 
 | # | HLD reference | HLD text | LLD refinement | Reason |
 |---|---|---|---|---|
@@ -2379,6 +2379,7 @@ These are intentional refinements made while detailing the design. R-1…R-7 wer
 | R-20 | §7, §12.2 coordinator | Coordinator output directory, member ID format and shutdown with pending joins not specified | Coordinator `metrics.dir`; member IDs are `<clientId>-<16 hex>`; pending joins get `UNKNOWN_SERVER_ERROR` (or a closed connection) at shutdown; `group.default.assignor` is `roundrobin` until the sticky assignor lands. | Events feed the analysis; IDs must be unique across restarts; a deferred reply must always be completed; the default must name an assignor that exists. |
 | R-21 | §10.6 consumer, §13.1 processed log | Processed ranges flushed "regularly" | A `beforeCommit` hook runs before every OffsetCommit; `elog-consumer` flushes its processed ranges there. | After a SIGKILL the next consumer resumes from the committed offset; if the processed log lagged the commit, the analysis would report records that were processed as skipped. |
 | R-22 | §16.2 E7, §15.3 fencing tests | "Callback sleep" consumer capacity not given a knob | `elog-consumer --process-us N` sleeps N µs per record in the callback. | E7 needs a known consumer capacity; F-FEN-1 needs a zombie that still holds unprocessed records when it wakes, so its stale commit is certain. |
+| R-23 | §6.8 follower truncation | Loop: truncate to min(leader end, LEO), drop epochs from there, retry | One round: truncate to min(leader's end for `le`, the follower's own end for `le`), and never below HW. | When the leader never had the follower's latest epoch `e` (started before the leader's end), the loop kept the follower's divergent records and asked about `e` forever. The follower's own end offset for `le` is where its log can first differ (as in Kafka's KIP-279). |
 
 ---
 
