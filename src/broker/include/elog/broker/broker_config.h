@@ -41,6 +41,7 @@ struct BrokerConfig {
     std::chrono::milliseconds fetchMaxWait{0};         // caps a fetch's maxWaitMs
     std::size_t replicaFetchMaxBytes = 0;              // replica.fetch.max.bytes
     std::chrono::milliseconds replicaFetchWait{0};     // replica.fetch.wait.ms
+    std::chrono::milliseconds replicaLagTimeMax{0};    // replica.lag.time.max.ms
 
     // `config` must have been loaded with brokerConfigSchema().
     static BrokerConfig from(const Config& config);

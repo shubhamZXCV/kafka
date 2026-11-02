@@ -200,6 +200,7 @@ Result<ReplicaFetchData> Replica::readForFollower(BrokerId follower, Offset fetc
         f.leaderLeoAtLastFetch = out.leaderLeo;
         maybeAdvanceHw();
         out.highWatermark = hw();
+        out.expansion = maybeExpandIsr(follower);
     }
     // The read is lock-free; followers read up to our LEO, whole batches (LLD §5.4).
     if (fetchOffset < out.leaderLeo) {
@@ -283,6 +284,50 @@ Status Replica::appendAsFollower(std::span<std::byte> batches, Offset leaderHw, 
         hw_.store(newHw, std::memory_order_release);
     }
     return okStatus();
+}
+
+std::optional<IsrProposal> Replica::maybeShrinkIsr(TimeMs now,
+                                                   std::chrono::milliseconds lagTimeMax) {
+    std::lock_guard lock(mu_);  // lock order: Replica::mu_ (LLD §11.2)
+    if (role_ != Role::LEADER || leader_->pendingIsr) {
+        return std::nullopt;  // one change in flight at a time
+    }
+    std::set<BrokerId> kept;
+    for (BrokerId replica : leader_->isr) {
+        const auto f = leader_->followers.find(replica);
+        if (replica == self_ || f == leader_->followers.end() ||
+            now - f->second.lastCaughtUpMs <= lagTimeMax.count()) {
+            kept.insert(replica);
+        }
+    }
+    if (kept == leader_->isr) {
+        return std::nullopt;
+    }
+    leader_->pendingIsr = kept;  // proposed, not applied: HW still counts the old ISR (R-7)
+    logging::get("replication")
+        ->info("isr_shrink_proposed topic={} partition={} epoch={} isr={} proposed={}", tp_.topic,
+               tp_.partition, leaderEpoch_, leader_->isr.size(), kept.size());
+    return IsrProposal{tp_, leaderEpoch_, kept};
+}
+
+// LLD §6.7: a follower rejoins the ISR once it has everything committed and everything of
+// the current leader epoch; again only proposed.
+std::optional<IsrProposal> Replica::maybeExpandIsr(BrokerId follower) {
+    const auto f = leader_->followers.find(follower);
+    if (leader_->pendingIsr || leader_->isr.contains(follower) || f == leader_->followers.end()) {
+        return std::nullopt;
+    }
+    const Offset epochStart = log_->epochCache().startOffsetOf(leaderEpoch_).value_or(0);
+    if (f->second.leo < hw() || f->second.leo < epochStart) {
+        return std::nullopt;
+    }
+    std::set<BrokerId> grown = leader_->isr;
+    grown.insert(follower);
+    leader_->pendingIsr = grown;
+    logging::get("replication")
+        ->info("isr_expand_proposed topic={} partition={} epoch={} follower={}", tp_.topic,
+               tp_.partition, leaderEpoch_, follower);
+    return IsrProposal{tp_, leaderEpoch_, grown};
 }
 
 Status Replica::awaitCommitted(Offset lastOffset, Deadline deadline, Epoch epoch) {

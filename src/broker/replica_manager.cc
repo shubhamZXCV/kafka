@@ -137,4 +137,14 @@ void ReplicaManager::applyRetention() {
     }
 }
 
+std::vector<IsrProposal> ReplicaManager::maybeShrinkIsrs(std::chrono::milliseconds lagTimeMax) {
+    std::vector<IsrProposal> proposals;
+    for (const auto& replica : all()) {
+        if (auto proposal = replica->maybeShrinkIsr(time::monotonicMs(), lagTimeMax)) {
+            proposals.push_back(std::move(*proposal));
+        }
+    }
+    return proposals;
+}
+
 }  // namespace elog

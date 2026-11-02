@@ -52,6 +52,15 @@ std::optional<Epoch> LeaderEpochCache::latestEpoch() const {
     return entries_.back().epoch;
 }
 
+std::optional<Offset> LeaderEpochCache::startOffsetOf(Epoch epoch) const {
+    for (const EpochEntry& e : entries_) {
+        if (e.epoch == epoch) {
+            return e.startOffset;
+        }
+    }
+    return std::nullopt;
+}
+
 std::pair<Epoch, Offset> LeaderEpochCache::endOffsetFor(Epoch epoch, Offset leo) const {
     const auto after =
         std::upper_bound(entries_.begin(), entries_.end(), epoch,

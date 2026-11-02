@@ -58,11 +58,19 @@ struct FetchData {
     std::uint32_t recordCount = 0;
 };
 
+// A proposed ISR for one partition, sent to the coordinator as AlterIsr (LLD §6.7).
+struct IsrProposal {
+    TopicPartition tp;
+    Epoch leaderEpoch = 0;
+    std::set<BrokerId> newIsr;
+};
+
 // What a follower gets back from one replica fetch (LLD §6.7).
 struct ReplicaFetchData {
     Offset highWatermark = 0;
     Offset leaderLeo = 0;
-    std::vector<std::byte> records;  // whole batches from the follower's LEO
+    std::vector<std::byte> records;        // whole batches from the follower's LEO
+    std::optional<IsrProposal> expansion;  // the follower caught up: add it to the ISR
 };
 
 // A follower's view for its fetcher thread (LLD §6.8).
@@ -157,6 +165,10 @@ public:
     // HW = min(leaderHw, LEO). Ignored unless still following at `epoch`.
     Status appendAsFollower(std::span<std::byte> batches, Offset leaderHw, Epoch epoch);
 
+    // LLD §6.7 shrink check (scheduler): proposes dropping followers that have not been caught
+    // up for longer than lagTimeMax. The change is only proposed (pendingIsr), not applied.
+    std::optional<IsrProposal> maybeShrinkIsr(TimeMs now, std::chrono::milliseconds lagTimeMax);
+
     // Offsets below this are committed and visible to consumers (INV-07).
     Offset hw() const { return hw_.load(std::memory_order_acquire); }
 
@@ -170,10 +182,11 @@ public:
 
 private:
     void becomeLeader(Epoch epoch, std::set<BrokerId> isr, const std::vector<BrokerId>& replicas,
-                      std::uint16_t minIsr, BrokerId self);  // requires mu_
-    void becomeFollower(Epoch epoch, BrokerId leader);       // requires mu_
-    Status checkLeaderEpoch(Epoch requestEpoch) const;       // requires mu_
-    void maybeAdvanceHw();                                   // requires mu_
+                      std::uint16_t minIsr, BrokerId self);        // requires mu_
+    void becomeFollower(Epoch epoch, BrokerId leader);             // requires mu_
+    Status checkLeaderEpoch(Epoch requestEpoch) const;             // requires mu_
+    void maybeAdvanceHw();                                         // requires mu_
+    std::optional<IsrProposal> maybeExpandIsr(BrokerId follower);  // requires mu_
 
     const TopicPartition tp_;
     mutable std::mutex mu_;

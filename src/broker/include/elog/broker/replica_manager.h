@@ -44,6 +44,8 @@ public:
     void checkpointRecoveryPoints();
     void checkpointHighWatermarks();
     void applyRetention();
+    // LLD §6.10: the ISR shrink check for every leader replica; returns the proposals.
+    std::vector<IsrProposal> maybeShrinkIsrs(std::chrono::milliseconds lagTimeMax);
 
 private:
     const std::string dataDir_;

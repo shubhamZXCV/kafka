@@ -42,6 +42,7 @@ std::vector<ConfigKey> brokerConfigSchema() {
         ConfigKey::integer("fetch.max.wait.ms", 500, 0, 60'000),
         ConfigKey::integer("replica.fetch.max.bytes", 4'194'304, 1024, 1 << 30),
         ConfigKey::integer("replica.fetch.wait.ms", 500, 0, 60'000),
+        ConfigKey::integer("replica.lag.time.max.ms", 10'000, 1000, kOneDayMs),
     };
 }
 
@@ -82,6 +83,7 @@ BrokerConfig BrokerConfig::from(const Config& config) {
     cfg.fetchMaxWait = config.getMs("fetch.max.wait.ms");
     cfg.replicaFetchMaxBytes = static_cast<std::size_t>(config.getInt("replica.fetch.max.bytes"));
     cfg.replicaFetchWait = config.getMs("replica.fetch.wait.ms");
+    cfg.replicaLagTimeMax = config.getMs("replica.lag.time.max.ms");
     return cfg;
 }
 

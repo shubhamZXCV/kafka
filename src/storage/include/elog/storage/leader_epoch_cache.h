@@ -29,6 +29,7 @@ public:
     // Records that `epoch` starts at `startOffset`; a no-op if it is already the latest.
     Status assign(Epoch epoch, Offset startOffset);
     std::optional<Epoch> latestEpoch() const;
+    std::optional<Offset> startOffsetOf(Epoch epoch) const;
 
     // LLD §6.8, leader side: the largest epoch <= `epoch` and where it ends (the start of
     // the next epoch, or `leo` if it is the latest). With no such epoch: (epoch, first start).
