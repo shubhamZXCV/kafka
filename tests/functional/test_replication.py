@@ -1,9 +1,18 @@
-"""Replication functional tests F-REP-1 … (LLD §15.3)."""
+"""Replication functional tests F-REP-1 … F-REP-5 (LLD §15.3)."""
 
 import hashlib
+import sys
+import time
 
-from elog_test.tools import create_topic, describe_topic, log_verify, start_producer
+import pytest
+from pathlib import Path
+
+from elog_test.tools import create_topic, describe_topic, dump, log_verify, start_producer
 from elog_test.wait import wait_until
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "analysis"))
+from elog_analysis.checks import check_committed_loss  # noqa: E402
+from elog_analysis.loaders import load_produced  # noqa: E402
 
 
 def replicas_ready(cluster, topic):
@@ -87,3 +96,70 @@ def test_F_REP_4_not_enough_replicas(make_cluster, out_dir):
     wait_until(lambda: len(partition_state(cluster)["isr"]) == 2, 30, "a follower back in the ISR")
     assert start_producer(cluster, "t", out_dir, id="p2", count=1_000).wait(60) == 0
     assert partition_state(cluster)["highWatermark"] == 2_000
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("round_", range(5))
+def test_F_REP_2_repeated(make_cluster, out_dir, round_):
+    """LLD §15.3: F-REP-2 is repeated five times in the slow suite."""
+    test_F_REP_2_leader_failover_loses_nothing_acked(make_cluster, out_dir)
+
+
+def test_F_REP_2_leader_failover_loses_nothing_acked(make_cluster, out_dir):
+    """SIGKILL the partition leader under load: a new leader comes from the ISR with a higher
+    epoch, and every record the producer had acked is still in the log."""
+    cluster = make_cluster(brokers=3, broker_settings=LAG)
+    create_topic(cluster, "t", 1, replication=3, min_isr=2)
+    wait_until(replicas_ready(cluster, "t"), 30, "replicas")
+    before = partition_state(cluster)
+    producer = start_producer(cluster, "t", out_dir, count=40_000, rate=8_000)
+    wait_until(lambda: partition_state(cluster)["highWatermark"] > 5_000, 30, "produce under way")
+    cluster.brokers[before["leader"]].kill()
+
+    after = wait_until(lambda: (lambda s: s if s["leader"] not in (before["leader"], -1) else None)(
+        partition_state(cluster)), 30, "a new leader")
+    assert after["leaderEpoch"] > before["leaderEpoch"]
+    assert after["leader"] in before["isr"]
+    producer.wait(120)            # records whose retries ran out were never acked
+    produced = load_produced(out_dir)
+    assert produced["count"].sum() > 5_000
+    assert check_committed_loss(produced, {("t", 0): dump(cluster, "t", 0)}) == []
+
+
+def test_F_REP_5_old_leader_truncates_and_rejoins(make_cluster, out_dir):
+    """A leader holding records its followers never got is killed; after a new leader takes
+    over and the old one restarts, it truncates those records (log_truncated), rejoins the
+    ISR, and all replicas end up identical."""
+    cluster = make_cluster(brokers=3, broker_settings=LAG)
+    create_topic(cluster, "t", 1, replication=3, min_isr=2)
+    wait_until(replicas_ready(cluster, "t"), 30, "replicas")
+    assert start_producer(cluster, "t", out_dir, id="p0", count=1_000).wait(60) == 0
+    before = partition_state(cluster)
+    old = before["leader"]
+    followers = [b for b in before["replicas"] if b != old]
+
+    def leader_log_bytes():
+        return sum(s.stat().st_size for s in (cluster.root / f"broker-{old}" / "t-0").glob("*.log"))
+
+    replicated = leader_log_bytes()
+    for b in followers:                     # the followers stop copying ...
+        cluster.brokers[b].pause()
+    # A fetch each follower already had waiting would be answered with the new batch into its
+    # socket buffer and applied on resume; let those long-polls (replica.fetch.wait.ms, 500 ms)
+    # expire empty first. Nothing outside the processes shows when, hence a fixed wait.
+    time.sleep(1.0)
+    producer = start_producer(cluster, "t", out_dir, id="p1", count=2_000)  # ... the leader appends
+    wait_until(lambda: leader_log_bytes() > replicated, 10, "an unreplicated batch on the leader")
+    cluster.brokers[old].kill()             # before the ISR can shrink
+    for b in followers:
+        cluster.brokers[b].resume()
+
+    wait_until(lambda: partition_state(cluster)["leader"] in followers, 30, "a new leader")
+    cluster.brokers[old].start()
+    wait_until(lambda: "log_truncated" in cluster.brokers[old].log(), 30, "old leader truncates")
+    wait_until(lambda: len(partition_state(cluster)["isr"]) == 3, 30, "old leader back in the ISR")
+    wait_until(lambda: len({log_digest(cluster, b, "t", 0) for b in (1, 2, 3)}) == 1, 30,
+               "identical replicas")
+    for b in (1, 2, 3):
+        assert log_verify(cluster, b)[0] == 0
+    producer.wait(60)                       # its unacked batch was retried to the new leader
