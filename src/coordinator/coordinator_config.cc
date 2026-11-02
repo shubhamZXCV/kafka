@@ -14,6 +14,7 @@ std::vector<ConfigKey> coordinatorConfigSchema() {
         ConfigKey::integer("listen.port", 9000, 1, 65535),
         ConfigKey::string("db.path", "./coordinator.db"),
         ConfigKey::string("metrics.dir", "./metrics"),
+        ConfigKey::boolean("coordinator.fencing.enabled", true),  // false only for E5 control
         // R-20: roundrobin until the sticky assignor exists.
         ConfigKey::choice("group.default.assignor", "roundrobin", {"roundrobin"}),
         ConfigKey::integer("group.min.session.timeout.ms", 1000, 1, 3'600'000),
@@ -39,6 +40,7 @@ CoordinatorConfig CoordinatorConfig::from(const Config& config) {
     cfg.server.requestTimeout = config.getMs("request.timeout.ms");
     cfg.dbPath = config.getString("db.path");
     cfg.metricsDir = config.getString("metrics.dir");
+    cfg.fencingEnabled = config.getBool("coordinator.fencing.enabled");
     cfg.groups.defaultAssignor = config.getString("group.default.assignor");
     cfg.groups.minSessionTimeoutMs =
         static_cast<std::uint32_t>(config.getInt("group.min.session.timeout.ms"));

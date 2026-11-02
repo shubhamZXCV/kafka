@@ -20,7 +20,8 @@ std::vector<ConfigKey> coordinatorConfigSchema();
 struct CoordinatorConfig {
     FrameServerConfig server;  // listen address and connection limits
     std::string dbPath;
-    std::string metricsDir;  // events-coordinator.csv (R-20)
+    bool fencingEnabled = true;  // coordinator.fencing.enabled (E5 control: false)
+    std::string metricsDir;      // events-coordinator.csv (R-20)
     GroupConfig groups;
     std::chrono::milliseconds tick{0};  // event-loop tick period
     std::size_t inboundQueueCapacity = 0;

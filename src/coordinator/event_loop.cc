@@ -17,12 +17,12 @@ constexpr TimeMs kPushRetryDelayMs = 500;  // R-15
 }  // namespace
 
 EventLoop::EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPusher& pusher,
-                     EventLog& events)
+                     EventLog& events, Metrics& metrics)
     : tick_(cfg.tick),
       meta_(repo),
       brokers_(repo, cfg.brokerSessionTimeout),
       groups_(repo, meta_, events, cfg.groups),
-      offsets_(repo, events),
+      offsets_(repo, events, metrics, cfg.fencingEnabled),
       pusher_(pusher),
       controllerIncarnation_(static_cast<std::uint32_t>(time::wallMs() / 1000)) {}
 
@@ -142,6 +142,7 @@ Frame EventLoop::dispatch(const Frame& request) {
 void EventLoop::onTick(TimeMs now) {
     brokers_.onTick(now);
     groups_.onTick(now);
+    offsets_.onTick(now);
     for (auto it = pushRetries_.begin(); it != pushRetries_.end();) {
         if (it->second.dueMs > now) {
             ++it;

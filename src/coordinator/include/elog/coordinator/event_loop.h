@@ -28,7 +28,7 @@ namespace elog {
 class EventLoop {
 public:
     EventLoop(const CoordinatorConfig& cfg, Repository& repo, BrokerPusher& pusher,
-              EventLog& events);
+              EventLog& events, Metrics& metrics);
 
     // Loads persisted state (LLD §7.6). Called before run().
     Status load();

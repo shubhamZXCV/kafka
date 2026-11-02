@@ -30,8 +30,14 @@ int CoordinatorServer::run() {
             ->error("events_open_failed dir={} error=\"{}\"", cfg_.metricsDir, events.message());
         return 1;
     }
+    auto metrics = Metrics::open(cfg_.metricsDir, "coordinator", std::chrono::milliseconds(1000));
+    if (!metrics.ok()) {
+        logging::get("coordinator")
+            ->error("metrics_open_failed dir={} error=\"{}\"", cfg_.metricsDir, metrics.message());
+        return 1;
+    }
     BrokerPusher pusher(inbound_);
-    EventLoop loop(cfg_, *repo.value(), pusher, *events.value());
+    EventLoop loop(cfg_, *repo.value(), pusher, *events.value(), *metrics.value());
     if (auto status = loop.load(); !status.ok()) {
         logging::get("coordinator")->error("load_failed error=\"{}\"", status.message());
         return 1;

@@ -6,10 +6,11 @@
 
 namespace elog {
 
-OffsetManager::OffsetManager(Repository& repo, EventLog& events) : repo_(repo), events_(events) {}
+OffsetManager::OffsetManager(Repository& repo, EventLog& events, Metrics& metrics,
+                             bool fencingEnabled)
+    : repo_(repo), events_(events), metrics_(metrics), fencingEnabled_(fencingEnabled) {}
 
 // LLD §7.4: every partition of one request in one transaction (one fsync per request).
-// TODO(T4.1): commits are unfenced until the ownership-epoch CAS lands.
 Frame OffsetManager::onCommit(const Frame& request, TimeMs nowWallMs) {
     auto commit = decodeOffsetCommitRequest(request);
     if (!commit.ok()) {
@@ -20,11 +21,11 @@ Frame OffsetManager::onCommit(const Frame& request, TimeMs nowWallMs) {
     auto txn = repo_.begin();
     Status status = txn.ok() ? okStatus() : Status{txn.error(), txn.message()};
     for (const OffsetCommitEntry& e : r.offsets) {
+        ErrorCode error = ErrorCode::UNKNOWN_SERVER_ERROR;
         if (status.ok()) {
-            status = repo_.commitOffsetUnfenced(r.groupId, {e.topic, e.partition}, e.offset,
-                                                e.epoch, nowWallMs);
+            status = commitEntry(r, e, nowWallMs, error);
         }
-        response.offsets.push_back({e.topic, e.partition, ErrorCode::NONE});
+        response.offsets.push_back({e.topic, e.partition, error});
     }
     if (status.ok()) {
         status = txn.value().commit();
@@ -35,17 +36,65 @@ Frame OffsetManager::onCommit(const Frame& request, TimeMs nowWallMs) {
         for (auto& e : response.offsets) {
             e.error = ErrorCode::UNKNOWN_SERVER_ERROR;
         }
-        return encode(response, request.correlationId);
-    }
-    for (const OffsetCommitEntry& e : r.offsets) {
-        events_.emit({.event = "commit_accepted",
-                      .group = r.groupId,
-                      .tp = TopicPartition{e.topic, e.partition},
-                      .epoch = e.epoch,
-                      .member = r.memberId,
-                      .offset = e.offset});
     }
     return encode(response, request.correlationId);
+}
+
+Status OffsetManager::commitEntry(const OffsetCommitRequest& r, const OffsetCommitEntry& e,
+                                  TimeMs nowWallMs, ErrorCode& error) {
+    const TopicPartition tp{e.topic, e.partition};
+    if (fencingEnabled_) {
+        auto accepted = repo_.commitOffsetFenced(r.groupId, tp, e.offset, e.epoch, r.memberId,
+                                                 nowWallMs);  // LLD §8.3, one statement
+        if (!accepted.ok()) {
+            return {accepted.error(), accepted.message()};
+        }
+        if (!accepted.value()) {
+            metrics_.counter("fence_rejections").add();
+            events_.emit({.event = "commit_fenced",
+                          .group = r.groupId,
+                          .tp = tp,
+                          .epoch = e.epoch,
+                          .member = r.memberId,
+                          .offset = e.offset});
+            error = ErrorCode::STALE_EPOCH;
+            return okStatus();
+        }
+    } else {
+        auto previous = repo_.committedOffset(r.groupId, tp);  // read only for detection
+        if (!previous.ok()) {
+            return {previous.error(), previous.message()};
+        }
+        if (auto status = repo_.commitOffsetUnfenced(r.groupId, tp, e.offset, e.epoch, nowWallMs);
+            !status.ok()) {
+            return {status.error(), status.message()};
+        }
+        if (previous.value() && e.offset < *previous.value()) {
+            metrics_.counter("offset_regressions").add();
+            events_.emit({.event = "offset_regression",
+                          .group = r.groupId,
+                          .tp = tp,
+                          .epoch = e.epoch,
+                          .member = r.memberId,
+                          .offset = e.offset,
+                          .detail = "prev=" + std::to_string(*previous.value())});
+        }
+    }
+    events_.emit({.event = "commit_accepted",
+                  .group = r.groupId,
+                  .tp = tp,
+                  .epoch = e.epoch,
+                  .member = r.memberId,
+                  .offset = e.offset});
+    error = ErrorCode::NONE;
+    return okStatus();
+}
+
+void OffsetManager::onTick(TimeMs now) {
+    if (!fencingEnabled_ && now - lastFencingWarningMs_ >= 10'000) {  // LLD §12.2
+        logging::get("coordinator")->warn("FENCING_DISABLED offset commits are not fenced");
+        lastFencingWarningMs_ = now;
+    }
 }
 
 Frame OffsetManager::onFetch(const Frame& request) {
